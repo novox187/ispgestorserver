@@ -28,6 +28,7 @@ class Cliente extends Authenticatable
         'fecha_contratacion',
         'estatus_servicio',
         'observaciones',
+        'ip',
     ];
 
     // Campos ocultos para arrays/JSON
