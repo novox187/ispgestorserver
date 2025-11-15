@@ -22,6 +22,8 @@ Route::prefix('mikrotik')->group(function () {
     Route::get('/system', [MikroTikController::class, 'systemInfo']);
     Route::get('/wireless-clients', [MikroTikController::class, 'wirelessClients']);
     Route::get('/queue-list', [MikroTikController::class, 'queueList']);
+    Route::get('/client-wireless-data', [MikroTikController::class, 'getclientbyip'])->middleware('auth:sanctum');
+    Route::get('/client-plans', [MikroTikController::class, 'getClientPlans'])->middleware('auth:sanctum');
 });
 
 // routes/web.php (si necesitas vistas)
