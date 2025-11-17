@@ -5,12 +5,12 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class Soporte extends Model
+class Support extends Model
 {
     use HasFactory;
 
     // Nombre de la tabla
-    protected $table = 'soporte';
+    protected $table = 'supports';
 
     // Clave primaria
     protected $primaryKey = 'id_ticket';
@@ -18,11 +18,11 @@ class Soporte extends Model
     // Campos que se pueden asignar masivamente
     protected $fillable = [
         'fk_id_cliente',
-        'asunto',
-        'descripcion',
-        'prioridad',
-        'estatus_ticket',
-        'tecnico_asignado',
+        'subject',
+        'description',
+        'priority',
+        'status',
+        'assigned_technician',
     ];
     
     /**
@@ -30,6 +30,6 @@ class Soporte extends Model
      */
     public function cliente()
     {
-        return $this->belongsTo(Cliente::class, 'fk_id_cliente', 'id_cliente');
-    }
+        return $this->belongsTo(Client::class, 'fk_id_cliente', 'id_cliente');
+    }   
 }

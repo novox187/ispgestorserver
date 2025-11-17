@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Cliente;
+use App\Models\Client;
 use Illuminate\Http\Request;
 
 class ClienteController extends Controller
@@ -13,7 +13,7 @@ class ClienteController extends Controller
     public function index()
     {
         // Trae todos los clientes con sus relaciones: servicio->plan y soportes
-        $clientes = Cliente::with(['servicio.plan', 'soportes'])->get();
+        $clientes = Client::with(['servicio.plan', 'soportes'])->get();
         return response()->json($clientes);
     }
 
@@ -31,11 +31,11 @@ class ClienteController extends Controller
     public function show(Request $request)
     {
         $authCliente = $request->user();
-        if (! $authCliente instanceof Cliente) {
+        if (! $authCliente instanceof Client) {
             return response()->json(['message' => 'No autenticado'], 401);
         }
         // Leer solo las columnas necesarias desde la base de datos
-        $data = Cliente::query()
+        $data = Client::query()
             ->whereKey($authCliente->getKey())
             ->selectRaw('nombre_completo as nombreCompleto, email, telefono_contacto, direccion_instalacion, coordenadas_gps')
             ->first();
@@ -46,7 +46,7 @@ class ClienteController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, Cliente $cliente)
+    public function update(Request $request, Client $client)
     {
         //
     }
@@ -54,7 +54,7 @@ class ClienteController extends Controller
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(Cliente $cliente)
+    public function destroy(Client $client)
     {
         //
     }
