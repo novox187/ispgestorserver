@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ClienteController;
 use App\Http\Controllers\AuthClientController;
 use App\Http\Controllers\MikroTikController;
+use App\Http\Controllers\ClientPlanController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -24,6 +25,14 @@ Route::prefix('mikrotik')->group(function () {
     Route::get('/queue-list', [MikroTikController::class, 'queueList']);
     Route::get('/client-wireless-data', [MikroTikController::class, 'getclientbyip'])->middleware('auth:sanctum');
     Route::get('/client-plans', [MikroTikController::class, 'getClientPlans'])->middleware('auth:sanctum');
+});
+
+// Rutas para planes
+Route::prefix('plans')->group(function () {
+    // Obtener todos los planes
+    Route::get('/', [ClientPlanController::class, 'getAllPlans']);
+    // Obtener plan actual del cliente (requiere autenticación o client_id)
+    Route::get('/current', [ClientPlanController::class, 'getCurrentClientPlan'])->middleware('auth:sanctum');
 });
 
 // routes/web.php (si necesitas vistas)
