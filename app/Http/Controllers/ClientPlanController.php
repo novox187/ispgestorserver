@@ -159,4 +159,68 @@ class ClientPlanController extends Controller
             ], 500);
         }
     }
+
+
+    /* TRAEMOS SOLO LOS DATOS NECESARIOS PARAMOSTRAR EN FACTURAS */
+    public function getCurrentClientPlanForInvoices(Request $request): JsonResponse
+{
+    try {
+        // Obtener el usuario autenticado
+        $client = Auth::user();
+        
+        if (!$client) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Usuario no autenticado'
+            ], 401);
+        }
+
+        $clientId = $client->id;
+        
+        if (!$clientId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Cliente no asociado a este usuario'
+            ], 404);
+        }
+
+        $currentPlan = ClientPlan::with('plan')
+            ->where('client_id', $clientId)
+            ->where('status', 'active')
+            ->where(function($query) {
+                $query->whereNull('end_date')
+                      ->orWhere('end_date', '>=', now());
+            })
+            ->latest('start_date')
+            ->first();
+
+        if (!$currentPlan) {
+            return response()->json([
+                'success' => true,
+                'data' => null,
+                'message' => 'El cliente no tiene un plan activo actualmente'
+            ]);
+        }
+
+        // SOLO LOS DATOS QUE NECESITA EL FRONTEND
+        $formattedPlan = [
+            'current_price' => (float) $currentPlan->current_price,
+            'billing_cycle' => $currentPlan->billing_cycle,
+            'plan_name' => $currentPlan->plan->name,
+            'next_billing_date' => $currentPlan->next_billing_date->format('Y-m-d')
+        ];
+
+        return response()->json([
+            'success' => true,
+            'data' => $formattedPlan,
+            'message' => 'Plan actual obtenido exitosamente'
+        ]);
+
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Error al obtener el plan actual: ' . $e->getMessage()
+        ], 500);
+    }
+}
 }

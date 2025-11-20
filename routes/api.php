@@ -34,6 +34,7 @@ Route::prefix('plans')->group(function () {
     Route::get('/', [ClientPlanController::class, 'getAllPlans']);
     // Obtener plan actual del cliente (requiere autenticación o client_id)
     Route::get('/current', [ClientPlanController::class, 'getCurrentClientPlan'])->middleware('auth:sanctum');
+    Route::get('/current/invoices', [ClientPlanController::class, 'getCurrentClientPlanForInvoices'])->middleware('auth:sanctum');
 });
 
 Route::prefix('wallet')->group(function () {
