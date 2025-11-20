@@ -6,6 +6,7 @@ use App\Http\Controllers\ClienteController;
 use App\Http\Controllers\AuthClientController;
 use App\Http\Controllers\MikroTikController;
 use App\Http\Controllers\ClientPlanController;
+use App\Http\Controllers\walletController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -33,6 +34,10 @@ Route::prefix('plans')->group(function () {
     Route::get('/', [ClientPlanController::class, 'getAllPlans']);
     // Obtener plan actual del cliente (requiere autenticación o client_id)
     Route::get('/current', [ClientPlanController::class, 'getCurrentClientPlan'])->middleware('auth:sanctum');
+});
+
+Route::prefix('wallet')->group(function () {
+    Route::get('/balance', [walletController::class, 'getBalance'])->middleware('auth:sanctum');
 });
 
 // routes/web.php (si necesitas vistas)

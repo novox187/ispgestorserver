@@ -39,7 +39,7 @@ class Client extends Authenticatable
     ];
 
     /**
-     * Get the client plans for the client.
+     * Obtén los planes del cliente para el cliente.
      */
     public function clientPlans(): HasMany
     {
@@ -47,7 +47,7 @@ class Client extends Authenticatable
     }
 
     /**
-     * Get the servicios for the client.
+     * Obtén los servicios del cliente para el cliente.
      */
     public function servicios(): HasMany
     {
@@ -55,7 +55,7 @@ class Client extends Authenticatable
     }
 
     /**
-     * Get the soportes for the client.
+     * Obtén los soportes del cliente para el cliente.
      */
     public function soportes(): HasMany
     {
@@ -63,7 +63,7 @@ class Client extends Authenticatable
     }
 
     /**
-     * Scope a query to only include active clients.
+     * Filtra los clientes activos.
      */
     public function scopeActive($query)
     {
@@ -71,7 +71,7 @@ class Client extends Authenticatable
     }
 
     /**
-     * Scope a query to only include inactive clients.
+     * Filtra los clientes inactivos.
      */
     public function scopeInactive($query)
     {
@@ -79,7 +79,7 @@ class Client extends Authenticatable
     }
 
     /**
-     * Scope a query to only include suspended clients.
+     * Filtra los clientes suspendidos.
      */
     public function scopeSuspended($query)
     {
@@ -87,7 +87,7 @@ class Client extends Authenticatable
     }
 
     /**
-     * Scope a query to only include limited clients.
+     * Filtra los clientes limitados.
      */
     public function scopeLimited($query)
     {
@@ -95,7 +95,7 @@ class Client extends Authenticatable
     }
 
     /**
-     * Scope a query to only include clients with IP assigned.
+     * Filtra los clientes con IP asignada.
      */
     public function scopeWithIp($query)
     {
@@ -103,7 +103,7 @@ class Client extends Authenticatable
     }
 
     /**
-     * Check if the client is active.
+     * Verifica si el cliente está activo.
      */
     public function isActive(): bool
     {
@@ -111,7 +111,7 @@ class Client extends Authenticatable
     }
 
     /**
-     * Check if the client has IP assigned.
+     * Verifica si el cliente tiene IP asignada.
      */
     public function hasIpAddress(): bool
     {
@@ -119,10 +119,42 @@ class Client extends Authenticatable
     }
 
     /**
-     * Get the contract duration in days.
+     * Obtiene la duración del contrato en días.
      */
     public function getContractDurationAttribute(): int
     {
         return $this->contract_date->diffInDays(now());
+    }
+
+    /**
+     * Relación con la billetera del cliente
+     */
+    public function wallet()
+    {
+        return $this->hasOne(Wallet::class);
+    }
+
+    /**
+     * Relación con las transacciones a través de la billetera
+     */
+    public function transactions()
+    {
+        return $this->hasManyThrough(Transaction::class, Wallet::class);
+    }
+
+    /**
+     * Obtener el saldo actual del cliente
+     */
+    public function getBalanceAttribute()
+    {
+        return $this->wallet ? $this->wallet->balance : 0;
+    }
+
+    /**
+     * Verificar si el cliente tiene saldo suficiente
+     */
+    public function hasSufficientBalance($amount)
+    {
+        return $this->balance >= $amount;
     }
 }
