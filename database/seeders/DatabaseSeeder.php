@@ -28,7 +28,7 @@ class DatabaseSeeder extends Seeder
             
             // 5. Sistema de billeteras
             WalletSeeder::class,
-            TransactionSeeder::class,
+/*             TransactionSeeder::class, */
             
             // 6. Tickets de soporte
             SupportSeeder::class,

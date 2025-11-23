@@ -7,6 +7,7 @@ use App\Http\Controllers\AuthClientController;
 use App\Http\Controllers\MikroTikController;
 use App\Http\Controllers\ClientPlanController;
 use App\Http\Controllers\walletController;
+use App\Http\Controllers\TransactionController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -35,6 +36,14 @@ Route::prefix('plans')->group(function () {
     // Obtener plan actual del cliente (requiere autenticación o client_id)
     Route::get('/current', [ClientPlanController::class, 'getCurrentClientPlan'])->middleware('auth:sanctum');
     Route::get('/current/invoices', [ClientPlanController::class, 'getCurrentClientPlanForInvoices'])->middleware('auth:sanctum');
+});
+
+Route::prefix('transactions')->group(function () {
+    Route::get('/client', [TransactionController::class, 'index'])->middleware('auth:sanctum');
+    Route::post('/create', [TransactionController::class, 'store'])->middleware('auth:sanctum');
+    Route::get('/show/{transaction}', [TransactionController::class, 'show'])->middleware('auth:sanctum');
+    Route::put('/update/{transaction}', [TransactionController::class, 'update'])->middleware('auth:sanctum');
+    Route::delete('/delete/{transaction}', [TransactionController::class, 'destroy'])->middleware('auth:sanctum');
 });
 
 Route::prefix('wallet')->group(function () {

@@ -4,32 +4,31 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Auth;
+use Cloudinary\Cloudinary;
+
+
 
 class Transaction extends Model
 {
     use HasFactory;
 
-    protected $fillable = [
-        'wallet_id',
-        'type',
-        'amount',
-        'description',
-        'reference',
-        'status',
-        'metadata'
-    ];
+    protected $fillable = ['wallet_id', 'type', 'amount', 'description', 'reference', 'status', 'metadata', 'image_public_id', 'image_url'];
 
     protected $casts = [
         'amount' => 'decimal:2',
         'metadata' => 'array',
+        'image_public_id' => 'string',
+        'image_url' => 'string',
         'created_at' => 'datetime',
-        'updated_at' => 'datetime'
+        'updated_at' => 'datetime',
     ];
 
     /**
      * Tipos de transacción permitidos
      */
     const TYPE_DEPOSIT = 'deposit';
+    const TYPE_TRANSFER = 'transfer';
     const TYPE_WITHDRAWAL = 'withdrawal';
     const TYPE_PAYMENT = 'payment';
     const TYPE_REFUND = 'refund';
@@ -106,7 +105,7 @@ class Transaction extends Model
     {
         $this->update([
             'status' => self::STATUS_FAILED,
-            'metadata' => array_merge($this->metadata ?? [], ['failure_reason' => $reason])
+            'metadata' => array_merge($this->metadata ?? [], ['failure_reason' => $reason]),
         ]);
         return $this;
     }
@@ -124,12 +123,12 @@ class Transaction extends Model
      */
     public function getIconAttribute()
     {
-        return match($this->type) {
+        return match ($this->type) {
             self::TYPE_DEPOSIT => '⬆️',
             self::TYPE_WITHDRAWAL => '⬇️',
             self::TYPE_PAYMENT => '💳',
             self::TYPE_REFUND => '↩️',
-            default => '🔹'
+            default => '🔹',
         };
     }
 
@@ -138,10 +137,53 @@ class Transaction extends Model
      */
     public function getColorAttribute()
     {
-        return match($this->type) {
+        return match ($this->type) {
             self::TYPE_DEPOSIT, self::TYPE_REFUND => 'success',
             self::TYPE_WITHDRAWAL, self::TYPE_PAYMENT => 'danger',
-            default => 'secondary'
+            default => 'secondary',
         };
+    }
+
+ /**
+     * Sube una imagen a Cloudinary y actualiza el registro.
+     *
+     * @param \Illuminate\Http\UploadedFile $imageFile
+     * @return void
+     */
+    public function uploadImage($imageFile)
+    {
+        if (!$imageFile) {
+            return;
+        }
+
+        $cloudinary = new Cloudinary(env('CLOUDINARY_URL'));
+
+        $uploadResult = $cloudinary->uploadApi()->upload($imageFile->getRealPath(), [
+            'folder' => 'transactions',
+        ]);
+
+        $this->update([
+            'image_public_id' => $uploadResult['public_id'],
+            'image_url'       => $uploadResult['secure_url'],
+        ]);
+    }
+
+    /**
+     * Elimina la imagen de Cloudinary si existe.
+     *
+     * @return void
+     */
+    public function deleteImage()
+    {
+        if ($this->image_public_id) {
+            $cloudinary = new Cloudinary(env('CLOUDINARY_URL'));
+
+            $cloudinary->uploadApi()->destroy($this->image_public_id);
+
+            $this->update([
+                'image_public_id' => null,
+                'image_url'       => null,
+            ]);
+        }
     }
 }
