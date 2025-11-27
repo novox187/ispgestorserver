@@ -8,6 +8,7 @@ use App\Http\Controllers\MikroTikController;
 use App\Http\Controllers\ClientPlanController;
 use App\Http\Controllers\walletController;
 use App\Http\Controllers\TransactionController;
+use App\Http\Controllers\InvoiceController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -48,6 +49,11 @@ Route::prefix('transactions')->group(function () {
 
 Route::prefix('wallet')->group(function () {
     Route::get('/balance', [walletController::class, 'getBalance'])->middleware('auth:sanctum');
+});
+
+Route::prefix('invoices')->group(function () {
+    Route::get('/all', [InvoiceController::class, 'getAllInvoices'])->middleware('auth:sanctum');
+    Route::get('/paid', [InvoiceController::class, 'getPaidInvoices'])->middleware('auth:sanctum');
 });
 
 // routes/web.php (si necesitas vistas)
