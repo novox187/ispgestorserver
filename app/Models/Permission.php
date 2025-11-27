@@ -10,7 +10,7 @@ class Permission extends Model
     use HasFactory;
 
     protected $table = 'permissions';
-    protected $primaryKey = 'id_permission';
+    protected $primaryKey = 'id';
 
     protected $fillable = [
         'nombre',
@@ -19,6 +19,11 @@ class Permission extends Model
 
     public function roles()
     {
-        return $this->belongsToMany(Rol::class, 'role_permission', 'fk_permission_id', 'fk_rol_id');
+        return $this->belongsToMany(Role::class, 'role_permission', 'fk_permission_id', 'fk_role_id');
+    }
+
+    public function isAssignedToRole(string $roleSlug): bool
+    {
+        return $this->roles->contains('slug', $roleSlug);
     }
 }

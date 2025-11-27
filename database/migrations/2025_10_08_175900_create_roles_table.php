@@ -8,16 +8,17 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('permissions', function (Blueprint $table) {
-            $table->id('id_permission');
+        Schema::create('roles', function (Blueprint $table) {
+            $table->id('id');
             $table->string('nombre')->unique();
             $table->string('slug')->unique();
+            $table->text('descripcion')->nullable();
             $table->timestamps();
         });
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('permissions');
+        Schema::dropIfExists('roles');
     }
 };

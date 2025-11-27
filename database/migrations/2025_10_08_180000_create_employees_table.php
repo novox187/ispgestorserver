@@ -11,15 +11,16 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('administradores', function (Blueprint $table) {
-            $table->id('id_admin');
+        Schema::create('employees', function (Blueprint $table) {
+            $table->id('id');
+            $table->unsignedBigInteger('role_id')->nullable();
             $table->string('nombre', 255);
             $table->string('email', 255)->unique();
             $table->string('password');
-            $table->enum('rol', ['super_admin', 'facturacion', 'tecnico']);
             $table->string('telefono', 50)->nullable();
             $table->rememberToken();
             $table->timestamps();
+            $table->foreign('role_id')->references('id')->on('roles')->nullOnDelete();
         });
     }
 
@@ -28,6 +29,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('administradores');
+        Schema::dropIfExists('employees');
     }
 };

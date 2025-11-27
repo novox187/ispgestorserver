@@ -2,7 +2,7 @@
 
 namespace Database\Seeders;
 
-use App\Models\Rol;
+use App\Models\Role;
 use Illuminate\Database\Seeder;
 
 class RolSeeder extends Seeder
@@ -19,7 +19,7 @@ class RolSeeder extends Seeder
         ];
         
         foreach ($roles as $r) {
-            Rol::firstOrCreate(['slug' => $r['slug']], $r);
+            Role::firstOrCreate(['slug' => $r['slug']], $r);
         }
 
         $this->command->info('Roles creados: ' . count($roles));
