@@ -37,7 +37,7 @@ class ClienteController extends Controller
         // Leer solo las columnas necesarias desde la base de datos
         $data = Client::query()
             ->whereKey($authCliente->getKey())
-            ->selectRaw('nombre_completo as nombreCompleto, email, telefono_contacto, direccion_instalacion, coordenadas_gps')
+            ->selectRaw('full_name, email, contact_phone, installation_address, gps_coordinates')
             ->first();
 
         return response()->json($data);
