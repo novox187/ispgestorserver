@@ -100,6 +100,15 @@ public function getclientbyip(Request $request): JsonResponse
         // Buscar el dispositivo en MikroTik
         $deviceInfo = $this->mikrotik->getWifiDeviceByIp($clientIp);
 
+        if (isset($deviceInfo['error']) && $deviceInfo['error']) {
+            return response()->json([
+                'success' => false,
+                'message' => $deviceInfo['message'],
+                'user_ip' => $clientIp,
+                'error_type' => 'mikrotik_connection'
+            ], 503); // Service Unavailable
+        }
+
         if (!$deviceInfo['found']) {
             return response()->json([
                 'success' => false,
@@ -155,6 +164,15 @@ public function getClientPlans(): JsonResponse
 
         // Obtener las queues del cliente
         $queuesInfo = $this->mikrotik->getClientQueues($clientIp);
+
+        if (isset($queuesInfo['error']) && $queuesInfo['error']) {
+            return response()->json([
+                'success' => false,
+                'message' => $queuesInfo['message'],
+                'client_ip' => $clientIp,
+                'error_type' => 'mikrotik_connection'
+            ], 503); // Service Unavailable
+        }
 
         if (!$queuesInfo['found']) {
             return response()->json([

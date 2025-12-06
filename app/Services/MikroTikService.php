@@ -12,7 +12,7 @@ class MikroTikService
 {
     protected $client;
 
-    public function __construct(Client $client)
+    public function __construct(?Client $client)
     {
         $this->client = $client;
     }
@@ -20,30 +20,42 @@ class MikroTikService
     //ver la informacion del router
     public function getSystemInfo(): array
     {
+        if (!$this->client) {
+            return [];
+        }
+
         try {
             $query = new Query('/system/resource/print');
             return $this->client->query($query)->read();
         } catch (Exception $e) {
             Log::error('MikroTik System Info Error: ' . $e->getMessage());
-            throw $e;
+            return [];
         }
     }
 
     //ver todos los dispositivos conectados por red wifi
     public function getWirelessClients(): array
     {
+        if (!$this->client) {
+            return [];
+        }
+
         try {
             $query = new Query('/interface/wireless/registration-table/print');
             return $this->client->query($query)->read();
         } catch (Exception $e) {
             Log::error('MikroTik Wireless Clients Error: ' . $e->getMessage());
-            throw $e;
+            return [];
         }
     }
 
     // ver los planes creados
     public function getQueueList(): array
     {
+        if (!$this->client) {
+            return [];
+        }
+
         try {
             $query = new Query('/queue/simple/print');
             $queues = $this->client->query($query)->read();
@@ -88,6 +100,14 @@ class MikroTikService
 
 public function getWifiDeviceByIp(string $ipAddress): array
 {
+    if (!$this->client) {
+        return [
+            'found' => false,
+            'error' => true,
+            'message' => 'Cliente MikroTik no configurado correctamente'
+        ];
+    }
+
     try {
         // Buscar en la tabla de registro wireless
         $wirelessQuery = new Query('/interface/wireless/registration-table/print');
@@ -121,13 +141,17 @@ public function getWifiDeviceByIp(string $ipAddress): array
         }
 
         return [
-            'found' => false, 
+            'found' => false,
             'message' => 'Dispositivo no encontrado en la tabla wireless'
         ];
 
     } catch (Exception $e) {
         Log::error('MikroTik WiFi Device by IP Error: ' . $e->getMessage());
-        throw $e;
+        return [
+            'found' => false,
+            'error' => true,
+            'message' => 'Error de conexión con el router MikroTik: ' . $e->getMessage()
+        ];
     }
 }
 
@@ -164,6 +188,14 @@ private function calculateSignalQuality(string $signalStrength): string
 
 public function getClientQueues(string $clientIp): array
 {
+    if (!$this->client) {
+        return [
+            'found' => false,
+            'error' => true,
+            'message' => 'Cliente MikroTik no configurado correctamente'
+        ];
+    }
+
     try {
         // Obtener todas las queues
         $query = new Query('/queue/simple/print');
@@ -213,7 +245,11 @@ public function getClientQueues(string $clientIp): array
 
     } catch (Exception $e) {
         Log::error('MikroTik Client Queues Error: ' . $e->getMessage());
-        throw $e;
+        return [
+            'found' => false,
+            'error' => true,
+            'message' => 'Error de conexión con el router MikroTik: ' . $e->getMessage()
+        ];
     }
 }
 

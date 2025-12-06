@@ -9,6 +9,8 @@ use App\Http\Controllers\ClientPlanController;
 use App\Http\Controllers\walletController;
 use App\Http\Controllers\TransactionController;
 use App\Http\Controllers\InvoiceController;
+use App\Http\Controllers\TicketController;
+use App\Http\Controllers\MessageController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -55,6 +57,9 @@ Route::prefix('invoices')->group(function () {
     Route::get('/all', [InvoiceController::class, 'getAllInvoices'])->middleware('auth:sanctum');
     Route::get('/paid', [InvoiceController::class, 'getPaidInvoices'])->middleware('auth:sanctum');
 });
+
+Route::get('messages', [MessageController::class, 'index'])->middleware('auth:sanctum');
+Route::post('messages', [MessageController::class, 'store'])->middleware('auth:sanctum');
 
 // routes/web.php (si necesitas vistas)
 
