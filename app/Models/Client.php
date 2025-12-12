@@ -59,7 +59,8 @@ class Client extends Authenticatable
      */
     public function soportes(): HasMany
     {
-        return $this->hasMany(Support::class);
+        // supports.fk_id_cliente -> clients.id
+        return $this->hasMany(Support::class, 'fk_id_cliente', 'id');
     }
 
     /**

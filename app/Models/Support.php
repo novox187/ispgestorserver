@@ -30,6 +30,7 @@ class Support extends Model
      */
     public function cliente()
     {
-        return $this->belongsTo(Client::class, 'fk_id_cliente', 'id_cliente');
+        // Relación correcta: fk en supports -> id en clients
+        return $this->belongsTo(Client::class, 'fk_id_cliente', 'id');
     }   
 }

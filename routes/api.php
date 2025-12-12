@@ -11,13 +11,22 @@ use App\Http\Controllers\TransactionController;
 use App\Http\Controllers\InvoiceController;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\MessageController;
+use App\Http\Controllers\Admin\ClientController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
 })->middleware('auth:sanctum');
 
 // Clientes con relaciones
-/* Route::get('/clientes', [ClienteController::class, 'index']); */
+
+// Rutas para la administracion
+Route::prefix('admin')->group(function () {
+// Listado resumido y detalle completo de un cliente
+Route::get('/clientes/summary', [ClientController::class, 'listSummary']);
+Route::get('/clientes/full/{id}', [ClientController::class, 'showFull']);
+});
+
+
 // Auth cliente
 Route::post('/client/login', [AuthClientController::class, 'login']);
 Route::post('/client/logout', [AuthClientController::class, 'logout'])->middleware('auth:sanctum');
