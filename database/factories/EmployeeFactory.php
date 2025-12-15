@@ -17,7 +17,7 @@ class EmployeeFactory extends Factory
         return [
             'nombre' => $this->faker->name(),
             'email' => $this->faker->unique()->safeEmail(),
-            'password' => Hash::make('password'),
+            'password' => 'password',
             'telefono' => $this->faker->numerify('########'),
             'remember_token' => Str::random(10),
             'role_id' => null,

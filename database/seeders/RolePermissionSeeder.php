@@ -19,8 +19,8 @@ class RolePermissionSeeder extends Seeder
 
         // Super Admin gets all permissions
         if ($superAdmin) {
-            $allPermissions = Permission::all();
-            $superAdmin->permissions()->attach($allPermissions);
+            $allPermissions = Permission::all()->pluck('id')->all();
+            $superAdmin->permissions()->syncWithoutDetaching($allPermissions);
         }
 
         // Facturacion gets billing related permissions
@@ -35,8 +35,8 @@ class RolePermissionSeeder extends Seeder
                 'eliminar_cliente',
                 'ver_clientes',
                 'ver_usuarios',
-            ])->get();
-            $facturacion->permissions()->attach($billingPermissions);
+            ])->pluck('id')->all();
+            $facturacion->permissions()->syncWithoutDetaching($billingPermissions);
         }
 
         // Tecnico gets technical permissions
@@ -48,8 +48,8 @@ class RolePermissionSeeder extends Seeder
                 'ver_planes',
                 'ver_clientes',
                 'ver_usuarios',
-            ])->get();
-            $tecnico->permissions()->attach($technicalPermissions);
+            ])->pluck('id')->all();
+            $tecnico->permissions()->syncWithoutDetaching($technicalPermissions);
         }
 
         $this->command->info('Permisos asignados a roles');

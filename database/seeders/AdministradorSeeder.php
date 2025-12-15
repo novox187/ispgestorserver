@@ -20,9 +20,18 @@ class AdministradorSeeder extends Seeder
         $tec = Role::where('slug', 'tecnico')->first();
 
         // 5. Crear 3 administradores asignados a los roles
-        Employee::factory()->create(['role_id' => $super?->id]);
-        Employee::factory()->create(['role_id' => $factu?->id]);
-        Employee::factory()->create(['role_id' => $tec?->id]);
+        Employee::firstOrCreate(
+            ['email' => 'admin@example.com'],
+            ['nombre' => 'Admin', 'password' => 'password', 'telefono' => '000000000', 'role_id' => $super?->id]
+        );
+        Employee::firstOrCreate(
+            ['email' => 'facturacion@example.com'],
+            ['nombre' => 'Facturación', 'password' => 'password', 'telefono' => '000000001', 'role_id' => $factu?->id]
+        );
+        Employee::firstOrCreate(
+            ['email' => 'tecnico@example.com'],
+            ['nombre' => 'Técnico', 'password' => 'password', 'telefono' => '000000002', 'role_id' => $tec?->id]
+        );
 
         $this->command->info('Administradores creados: ' . count(Employee::all()));
     }

@@ -12,6 +12,7 @@ use App\Http\Controllers\InvoiceController;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\MessageController;
 use App\Http\Controllers\Admin\ClientController;
+use App\Http\Controllers\AuthEmployeeController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -20,7 +21,7 @@ Route::get('/user', function (Request $request) {
 // Clientes con relaciones
 
 // Rutas para la administracion
-Route::prefix('admin')->group(function () {
+Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
 // Listado resumido y detalle completo de un cliente
 Route::get('/clientes/summary', [ClientController::class, 'listSummary']);
 Route::get('/clientes/full/{id}', [ClientController::class, 'showFull']);
@@ -34,6 +35,10 @@ Route::post('/client/login', [AuthClientController::class, 'login']);
 Route::post('/client/logout', [AuthClientController::class, 'logout'])->middleware('auth:sanctum');
 // Ruta protegida que devuelve el cliente autenticado por token desde el controlador
 Route::get('/clientes/cliente', [ClienteController::class, 'show'])->middleware('auth:sanctum');
+
+// Auth empleado (employee)
+Route::post('/employee/login', [AuthEmployeeController::class, 'login']);
+Route::post('/employee/logout', [AuthEmployeeController::class, 'logout'])->middleware('auth:sanctum');
 
 Route::prefix('mikrotik')->group(function () {
     Route::get('/system', [MikroTikController::class, 'systemInfo']);
