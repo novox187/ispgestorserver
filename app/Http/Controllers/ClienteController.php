@@ -3,7 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Models\Client;
+use App\Models\Wallet;
+use App\Models\ClientPlan;
+use App\Models\Plan;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Str;
 
 class ClienteController extends Controller
 {
@@ -12,8 +19,7 @@ class ClienteController extends Controller
      */
     public function index()
     {
-        // Trae todos los clientes con sus relaciones: servicio->plan y soportes
-        $clientes = Client::with(['servicio.plan', 'soportes'])->get();
+        $clientes = Client::with(['servicios.plan', 'soportes'])->get();
         return response()->json($clientes);
     }
 
@@ -22,7 +28,119 @@ class ClienteController extends Controller
      */
     public function store(Request $request)
     {
-        //
+        try {
+            $data = $request->validate([
+                'full_name' => ['required', 'string', 'max:255'],
+                'document_id' => ['required', 'string', 'max:50', 'unique:clients,document_id'],
+                'contact_phone' => ['required', 'string', 'max:20'],
+                'email' => ['required', 'email', 'max:255', 'unique:clients,email'],
+                'password' => ['required', 'string', 'min:6'],
+                'installation_address' => ['required', 'string'],
+                'gps_coordinates' => ['nullable', 'string', 'max:50'],
+                'contract_date' => ['required', 'date'],
+                'service_status' => ['nullable', 'in:ACTIVE,LIMITED,SUSPENDED,CANCELLED,INACTIVE,ACTIVO,LIMITADO,SUSPENDIDO,INACTIVO'],
+                'ip' => ['nullable', 'ip'],
+                'observations' => ['nullable', 'string'],
+                'plan_id' => ['nullable', 'integer', 'exists:plans,id'],
+                'plan' => ['nullable', 'string'],
+            ]);
+
+            if (!empty($data['service_status'])) {
+                $map = [
+                    'ACTIVE' => 'ACTIVE',
+                    'LIMITED' => 'LIMITED',
+                    'SUSPENDED' => 'SUSPENDED',
+                    'CANCELLED' => 'INACTIVE',
+                    'INACTIVE' => 'INACTIVE',
+                    'ACTIVO' => 'ACTIVE',
+                    'LIMITADO' => 'LIMITED',
+                    'SUSPENDIDO' => 'SUSPENDED',
+                    'INACTIVO' => 'INACTIVE',
+                ];
+                $upper = strtoupper($data['service_status']);
+                $data['service_status'] = $map[$upper] ?? 'ACTIVE';
+            }
+
+            $client = Client::create([
+                'full_name' => $data['full_name'],
+                'document_id' => $data['document_id'],
+                'contact_phone' => $data['contact_phone'],
+                'email' => $data['email'],
+                'password' => Hash::make($data['password']),
+                'installation_address' => $data['installation_address'],
+                'gps_coordinates' => $data['gps_coordinates'] ?? null,
+                'contract_date' => $data['contract_date'],
+                'service_status' => $data['service_status'] ?? 'ACTIVE',
+                'ip' => $data['ip'] ?? '0.0.0.0',
+                'observations' => $data['observations'] ?? null,
+            ]);
+
+            $wallet = Wallet::create([
+                'client_id' => $client->id,
+                'balance' => 0,
+                'currency' => 'USD',
+                'status' => 'active',
+            ]);
+
+            $clientPlan = null;
+            if (!empty($data['plan_id']) || !empty($data['plan'])) {
+                $plan = null;
+                if (!empty($data['plan_id'])) {
+                    $plan = Plan::find($data['plan_id']);
+                } else {
+                    $plan = Plan::query()
+                        ->where('name', $data['plan'])
+                        ->orWhere('slug', $data['plan'])
+                        ->first();
+                }
+                if ($plan) {
+                    $clientPlan = ClientPlan::create([
+                        'client_id' => $client->id,
+                        'plan_id' => $plan->id,
+                        'status' => 'active',
+                        'start_date' => now()->toDateString(),
+                        'next_billing_date' => now()->addMonth()->toDateString(),
+                        'current_price' => $plan->monthly_price ?? 0,
+                        'billing_cycle' => $plan->billing_cycle ?? 'monthly',
+                        'ip_address' => $data['ip'] ?? null,
+                        'notes' => $data['observations'] ?? null,
+                    ]);
+                }
+            }
+
+            return response()->json([
+                'client' => $client,
+                'wallet' => $wallet,
+                'client_plan' => $clientPlan,
+            ], 201);
+        } catch (ValidationException $ve) {
+            $errorId = (string) Str::uuid();
+            $safeInput = collect($request->all())->except(['password'])->toArray();
+            Log::warning('Cliente store validation failed', [
+                'error_id' => $errorId,
+                'errors' => $ve->errors(),
+                'input' => $safeInput,
+            ]);
+            return response()->json([
+                'message' => 'Errores de validación.',
+                'errors' => $ve->errors(),
+                'error_id' => $errorId,
+            ], 422);
+        } catch (\Throwable $e) {
+            $errorId = (string) Str::uuid();
+            $safeInput = collect($request->all())->except(['password'])->toArray();
+            Log::error('Cliente store failed', [
+                'error_id' => $errorId,
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'input' => $safeInput,
+            ]);
+            return response()->json([
+                'message' => 'Error creando cliente.',
+                'error_id' => $errorId,
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ], 500);
+        }
     }
 
     /**

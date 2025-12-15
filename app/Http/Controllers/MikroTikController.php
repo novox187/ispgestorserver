@@ -4,6 +4,7 @@
 namespace App\Http\Controllers;
 
 use App\Services\MikroTikService;
+use App\Models\Client;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -71,8 +72,7 @@ public function queueList(): JsonResponse
             'error' => $e->getMessage()
         ], 500);
     }
-}
-
+    }
 
 public function getclientbyip(Request $request): JsonResponse
 {
@@ -134,6 +134,46 @@ public function getclientbyip(Request $request): JsonResponse
         return response()->json([
             'success' => false,
             'message' => 'Error buscando dispositivo WiFi',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
+
+public function checkIp(Request $request): JsonResponse
+{
+    try {
+        $ip = $request->query('ip');
+        if (!$ip || !filter_var($ip, FILTER_VALIDATE_IP)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'IP inválida',
+                'errors' => ['ip' => ['Formato de IP incorrecto']]
+            ], 422);
+        }
+
+        $inDb = Client::query()->where('ip', $ip)->exists();
+        $routerResult = $this->mikrotik->getWifiDeviceByIp($ip);
+        $inRouter = isset($routerResult['found']) && $routerResult['found'] === true;
+
+        $status = 'available';
+        if ($inDb && $inRouter) $status = 'in_use_both';
+        else if ($inDb) $status = 'in_use_db';
+        else if ($inRouter) $status = 'in_use_router';
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'ip' => $ip,
+                'in_db' => $inDb,
+                'in_router' => $inRouter,
+                'status' => $status
+            ],
+            'message' => $status === 'available' ? 'IP disponible' : 'IP en uso'
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Error verificando IP',
             'error' => $e->getMessage()
         ], 500);
     }

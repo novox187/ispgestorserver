@@ -61,6 +61,31 @@ class ClientPlanController extends Controller
         }
     }
 
+    public function getPlanNames(): JsonResponse
+    {
+        try {
+            $plans = Plan::query()
+                ->select(['id', 'name'])
+                ->where('is_active', true)
+                ->orderBy('priority')
+                ->orderBy('monthly_price')
+                ->get();
+            $data = $plans->map(function ($plan) {
+                return ['id' => $plan->id, 'name' => $plan->name];
+            });
+            return response()->json([
+                'success' => true,
+                'data' => $data,
+                'message' => 'Planes mínimos obtenidos exitosamente'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener los planes: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
     /**
      * Obtener el plan actual del cliente
      */

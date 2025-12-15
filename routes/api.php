@@ -24,6 +24,8 @@ Route::prefix('admin')->group(function () {
 // Listado resumido y detalle completo de un cliente
 Route::get('/clientes/summary', [ClientController::class, 'listSummary']);
 Route::get('/clientes/full/{id}', [ClientController::class, 'showFull']);
+// Crear cliente (público/admin segun protección que se agregue)
+Route::post('/clientes/crear', [ClienteController::class, 'store']);
 });
 
 
@@ -39,12 +41,14 @@ Route::prefix('mikrotik')->group(function () {
     Route::get('/queue-list', [MikroTikController::class, 'queueList']);
     Route::get('/client-wireless-data', [MikroTikController::class, 'getclientbyip'])->middleware('auth:sanctum');
     Route::get('/client-plans', [MikroTikController::class, 'getClientPlans'])->middleware('auth:sanctum');
+    Route::get('/ip/check', [MikroTikController::class, 'checkIp']);
 });
 
 // Rutas para planes
 Route::prefix('plans')->group(function () {
     // Obtener todos los planes
     Route::get('/', [ClientPlanController::class, 'getAllPlans']);
+    Route::get('/names', [ClientPlanController::class, 'getPlanNames']);
     // Obtener plan actual del cliente (requiere autenticación o client_id)
     Route::get('/current', [ClientPlanController::class, 'getCurrentClientPlan'])->middleware('auth:sanctum');
     Route::get('/current/invoices', [ClientPlanController::class, 'getCurrentClientPlanForInvoices'])->middleware('auth:sanctum');
