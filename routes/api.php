@@ -47,7 +47,7 @@ Route::prefix('mikrotik')->group(function () {
     Route::get('/client-wireless-data', [MikroTikController::class, 'getclientbyip'])->middleware('auth:sanctum');
     Route::get('/client-plans', [MikroTikController::class, 'getClientPlans'])->middleware('auth:sanctum');
     Route::get('/ip/check', [MikroTikController::class, 'checkIp']);
-    Route::post('/sync/plans', [MikroTikController::class, 'syncPlans'])->middleware('auth:sanctum');
+    Route::post('/sync/plans', [MikroTikController::class, 'syncAll'])->middleware('auth:sanctum');
 });
 
 // Rutas para planes

@@ -344,4 +344,73 @@ class MikroTikQueueSyncService
             }
         }
     }
+
+    public function syncAllClients(): array
+    {
+        $items = [];
+        $processed = 0;
+        $created = 0;
+        $skipped = 0;
+        $errors = 0;
+        $plansMap = [];
+        $list = \App\Models\ClientPlan::query()
+            ->with(['client', 'plan'])
+            ->where('status', 'active')
+            ->get();
+        foreach ($list as $cp) {
+            $processed++;
+            $client = $cp->client;
+            $plan = $cp->plan;
+            if (!$client || !$plan) {
+                $errors++;
+                $items[] = [
+                    'client_plan_id' => $cp->id,
+                    'error' => 'Relaciones faltantes',
+                ];
+                continue;
+            }
+            $ip = $cp->ip_address ?: $client->ip;
+            if (!$ip || !filter_var($ip, FILTER_VALIDATE_IP)) {
+                $skipped++;
+                $items[] = [
+                    'client_id' => $client->id,
+                    'document_id' => $client->document_id,
+                    'plan_id' => $plan->id,
+                    'ip' => $ip,
+                    'skipped_reason' => 'IP inválida o vacía',
+                ];
+                continue;
+            }
+            try {
+                if (!isset($plansMap[$plan->id])) {
+                    $plansMap[$plan->id] = $this->ensurePlanQueue($plan);
+                }
+                $res = $this->createClientAndQueue($client, $cp, $plan);
+                $created++;
+                $items[] = [
+                    'client_id' => $client->id,
+                    'document_id' => $client->document_id,
+                    'ip' => $ip,
+                    'plan_id' => $plan->id,
+                    'result' => $res,
+                ];
+            } catch (Throwable $e) {
+                $errors++;
+                $items[] = [
+                    'client_id' => $client->id,
+                    'document_id' => $client->document_id,
+                    'ip' => $ip,
+                    'plan_id' => $plan->id,
+                    'error' => $e->getMessage(),
+                ];
+            }
+        }
+        return [
+            'processed' => $processed,
+            'created' => $created,
+            'skipped' => $skipped,
+            'errors_count' => $errors,
+            'items' => $items,
+        ];
+    }
 }

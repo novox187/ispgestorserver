@@ -179,7 +179,7 @@ public function checkIp(Request $request): JsonResponse
             'error' => $e->getMessage()
         ], 500);
     }
-}
+    }
 
 public function syncPlans(): JsonResponse
 {
@@ -217,6 +217,57 @@ public function syncPlans(): JsonResponse
         return response()->json([
             'success' => false,
             'message' => 'Error sincronizando planes',
+            'error' => $e->getMessage(),
+        ], 500);
+    }
+}
+
+public function syncAll(): JsonResponse
+{
+    try {
+        $sys = $this->mikrotik->getSystemInfo();
+        if (empty($sys)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No hay conexión con MikroTik. Revisa MIKROTIK_HOST/USER/PASS y permisos.',
+            ], 503);
+        }
+        $writeCheck = $this->mikrotik->testSimpleQueueWrite();
+        if (!$writeCheck['success']) {
+            return response()->json([
+                'success' => false,
+                'message' => 'La cuenta no puede escribir en /queue/simple. Habilita API y permisos write.',
+                'diagnostic' => $writeCheck,
+            ], 403);
+        }
+        $plans = Plan::query()->where('is_active', true)->get();
+        $planResults = [];
+        foreach ($plans as $plan) {
+            $planResults[] = [
+                'plan_id' => $plan->id,
+                'name' => $plan->name,
+                'result' => $this->sync->ensurePlanQueue($plan),
+            ];
+        }
+        $clientResults = $this->sync->syncAllClients();
+        $summary = [
+            'plans_count' => count($planResults),
+            'clients_processed' => $clientResults['processed'] ?? 0,
+            'clients_created' => $clientResults['created'] ?? 0,
+            'clients_skipped' => $clientResults['skipped'] ?? 0,
+            'clients_errors' => $clientResults['errors_count'] ?? 0,
+        ];
+        return response()->json([
+            'success' => true,
+            'plans' => $planResults,
+            'clients' => $clientResults['items'] ?? [],
+            'summary' => $summary,
+            'message' => 'Sincronización completada: planes y clientes',
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Error sincronizando planes y clientes',
             'error' => $e->getMessage(),
         ], 500);
     }
