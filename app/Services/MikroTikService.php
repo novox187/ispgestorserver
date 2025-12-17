@@ -17,6 +17,58 @@ class MikroTikService
         $this->client = $client;
     }
 
+    public function getClient(): ?Client
+    {
+        return $this->client;
+    }
+
+    public function runQuery(Query $query): array
+    {
+        if (!$this->client) {
+            return [];
+        }
+        return $this->client->query($query)->read();
+    }
+
+    public function testSimpleQueueWrite(): array
+    {
+        if (!$this->client) {
+            return ['success' => false, 'message' => 'Cliente MikroTik no inicializado'];
+        }
+        try {
+            $name = '__mk_write_test__';
+            // Intentar crear una queue mínima
+            $add = new Query('/queue/simple/add');
+            $add->equal('name', $name);
+            $add->equal('target', '0.0.0.0/0');
+            $add->equal('parent', 'none');
+            $add->equal('priority', '8');
+            $add->equal('max-limit', '1M/1M');
+            $result = $this->client->query($add)->read();
+            // Intentar leerla
+            $print = new Query('/queue/simple/print');
+            $print->where('name', $name);
+            $created = $this->client->query($print)->read();
+            // Intentar removerla
+            if (!empty($created[0]['.id'])) {
+                $del = new Query('/queue/simple/remove');
+                $del->equal('.id', $created[0]['.id']);
+                $this->client->query($del)->read();
+            }
+            $ok = !empty($created);
+            return [
+                'success' => $ok,
+                'result' => $result,
+                'created' => $created,
+            ];
+        } catch (\Throwable $e) {
+            return [
+                'success' => false,
+                'message' => $e->getMessage(),
+            ];
+        }
+    }
+
     //ver la informacion del router
     public function getSystemInfo(): array
     {

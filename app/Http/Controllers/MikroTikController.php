@@ -4,6 +4,8 @@
 namespace App\Http\Controllers;
 
 use App\Services\MikroTikService;
+use App\Services\MikroTikQueueSyncService;
+use App\Models\Plan;
 use App\Models\Client;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -12,7 +14,7 @@ use Illuminate\Support\Facades\Auth;
 
 class MikroTikController extends Controller
 {
-    public function __construct(protected MikroTikService $mikrotik) {}
+    public function __construct(protected MikroTikService $mikrotik, protected MikroTikQueueSyncService $sync) {}
 
     public function systemInfo(): JsonResponse
     {
@@ -175,6 +177,47 @@ public function checkIp(Request $request): JsonResponse
             'success' => false,
             'message' => 'Error verificando IP',
             'error' => $e->getMessage()
+        ], 500);
+    }
+}
+
+public function syncPlans(): JsonResponse
+{
+    try {
+        $sys = $this->mikrotik->getSystemInfo();
+        if (empty($sys)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No hay conexión con MikroTik. Revisa MIKROTIK_HOST/USER/PASS y permisos.',
+            ], 503);
+        }
+        $writeCheck = $this->mikrotik->testSimpleQueueWrite();
+        if (!$writeCheck['success']) {
+            return response()->json([
+                'success' => false,
+                'message' => 'La cuenta no puede escribir en /queue/simple. Habilita API y permisos write.',
+                'diagnostic' => $writeCheck,
+            ], 403);
+        }
+        $plans = Plan::query()->where('is_active', true)->get();
+        $results = [];
+        foreach ($plans as $plan) {
+            $results[] = [
+                'plan_id' => $plan->id,
+                'name' => $plan->name,
+                'result' => $this->sync->ensurePlanQueue($plan),
+            ];
+        }
+        return response()->json([
+            'success' => true,
+            'count' => count($results),
+            'data' => $results,
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Error sincronizando planes',
+            'error' => $e->getMessage(),
         ], 500);
     }
 }

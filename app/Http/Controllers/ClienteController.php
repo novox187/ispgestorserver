@@ -6,6 +6,7 @@ use App\Models\Client;
 use App\Models\Wallet;
 use App\Models\ClientPlan;
 use App\Models\Plan;
+use App\Services\MikroTikQueueSyncService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
@@ -14,6 +15,8 @@ use Illuminate\Support\Str;
 
 class ClienteController extends Controller
 {
+    public function __construct(protected MikroTikQueueSyncService $sync) {}
+
     /**
      * Display a listing of the resource.
      */
@@ -83,8 +86,8 @@ class ClienteController extends Controller
             ]);
 
             $clientPlan = null;
+            $plan = null;
             if (!empty($data['plan_id']) || !empty($data['plan'])) {
-                $plan = null;
                 if (!empty($data['plan_id'])) {
                     $plan = Plan::find($data['plan_id']);
                 } else {
@@ -108,10 +111,33 @@ class ClienteController extends Controller
                 }
             }
 
+            if ($plan) {
+                try {
+                    $syncResult = $this->sync->createClientAndQueue($client, $clientPlan, $plan);
+                } catch (\Throwable $e) {
+                    Log::error('Sincronización MikroTik falló durante creación de cliente', [
+                        'client_id' => $client->id,
+                        'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString(),
+                    ]);
+                    // Rollback de datos creados si falla la creación en MikroTik
+                    if ($clientPlan) {
+                        $clientPlan->delete();
+                    }
+                    $wallet->delete();
+                    $client->delete();
+                    return response()->json([
+                        'message' => 'Fallo creando queue en MikroTik. No se creó el cliente.',
+                        'error' => config('app.debug') ? $e->getMessage() : null,
+                    ], 502);
+                }
+            }
+
             return response()->json([
                 'client' => $client,
                 'wallet' => $wallet,
                 'client_plan' => $clientPlan,
+                'sync' => isset($syncResult) ? $syncResult : null,
             ], 201);
         } catch (ValidationException $ve) {
             $errorId = (string) Str::uuid();
