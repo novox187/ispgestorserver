@@ -13,6 +13,7 @@ use App\Http\Controllers\TicketController;
 use App\Http\Controllers\MessageController;
 use App\Http\Controllers\Admin\ClientController;
 use App\Http\Controllers\AuthEmployeeController;
+use App\Http\Controllers\Admin\PlanController as AdminPlanController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -27,6 +28,10 @@ Route::get('/clientes/summary', [ClientController::class, 'listSummary']);
 Route::get('/clientes/full/{id}', [ClientController::class, 'showFull']);
 // Crear cliente (público/admin segun protección que se agregue)
 Route::post('/clientes/crear', [ClienteController::class, 'store']);
+// Planes con features
+Route::get('/planes/summary', [AdminPlanController::class, 'listSummary']);
+Route::put('/planes/{id}', [AdminPlanController::class, 'update']);
+Route::put('/planes/{id}/status', [AdminPlanController::class, 'setStatus']);
 });
 
 
