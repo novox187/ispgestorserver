@@ -3,13 +3,15 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\Pivot;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use App\Traits\Auditable;
 
-class ClientPlan extends Model
+class ClientPlan extends Pivot
 {
-    use HasFactory;
+    use HasFactory, Auditable;
 
+    public $incrementing = true;
     protected $table = 'clients_plans';
 
     protected $fillable = [

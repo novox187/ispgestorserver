@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Traits\Auditable;
 use Illuminate\Support\Facades\Auth;
 use Cloudinary\Cloudinary;
 
@@ -11,7 +12,7 @@ use Cloudinary\Cloudinary;
 
 class Transaction extends Model
 {
-    use HasFactory;
+    use HasFactory, Auditable;
 
     protected $fillable = ['wallet_id', 'type', 'amount', 'description', 'reference', 'status', 'metadata', 'image_public_id', 'image_url'];
 

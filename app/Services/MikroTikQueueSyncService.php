@@ -5,6 +5,9 @@ namespace App\Services;
 use App\Models\Client;
 use App\Models\ClientPlan;
 use App\Models\Plan;
+use App\Models\Audit;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use RouterOS\Query;
@@ -13,6 +16,26 @@ use Throwable;
 class MikroTikQueueSyncService
 {
     public function __construct(protected MikroTikService $mikrotik) {}
+
+    /**
+     * Helper to log MikroTik audits manually since this is not an Eloquent model.
+     */
+    protected function auditMikroTik(string $operation, string $recordId, ?array $oldValues, ?array $newValues): void
+    {
+        try {
+            Audit::create([
+                'table_name' => 'mikrotik_queues',
+                'operation' => $operation,
+                'record_id' => $recordId,
+                'old_values' => $oldValues,
+                'new_values' => $newValues,
+                'user_id' => Auth::id(), // Might be null if run from CLI/Job
+                'ip_address' => Request::ip() ?? '127.0.0.1',
+            ]);
+        } catch (Throwable $e) {
+            Log::error('Failed to audit MikroTik action: ' . $e->getMessage());
+        }
+    }
 
     public function normalizeName(string $name): string
     {
@@ -79,6 +102,8 @@ class MikroTikQueueSyncService
         $del = new Query('/queue/simple/remove');
         $del->equal('.id', $queue['.id']);
         $this->mikrotik->runQuery($del);
+
+        $this->auditMikroTik('DELETE', $name, $queue, null);
     }
 
     public function ensurePlanQueue(Plan $plan): array
@@ -130,6 +155,8 @@ class MikroTikQueueSyncService
         $created = $this->withRetries(function () use ($params) {
             return $this->createSimpleQueue($params);
         });
+
+        $this->auditMikroTik('INSERT', $normalized, null, $params);
 
         Log::info('Plan queue created', [
             'plan_id' => $plan->id,
@@ -308,6 +335,9 @@ class MikroTikQueueSyncService
             $set->equal('.id', $queue['.id']);
             $set->equal('target', $newTarget);
             $this->mikrotik->runQuery($set);
+
+            $this->auditMikroTik('UPDATE', $planQueueName, ['target' => $current], ['target' => $newTarget]);
+
             Log::info('Plan queue target updated', [
                 'queue_name' => $planQueueName,
                 'old_target' => $current,

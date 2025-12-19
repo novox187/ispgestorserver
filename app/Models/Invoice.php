@@ -4,10 +4,11 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Traits\Auditable;
 
 class Invoice extends Model
 {
-    use HasFactory;
+    use HasFactory, Auditable;
 
     protected $fillable = ['client_id', 'client_plan_id', 'invoice_number', 'issue_date', 'due_date', 'amount', 'tax_amount', 'total_amount', 'status', 'payment_method', 'paid_at', 'payment_reference', 'description', 'metadata'];
 

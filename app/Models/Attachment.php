@@ -6,10 +6,11 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Cloudinary\Cloudinary; // Requiere la instalación del SDK de Cloudinary (ej. con un Facade/Service)
+use App\Traits\Auditable;
 
 class Attachment extends Model
 {
-    use HasFactory;
+    use HasFactory, Auditable;
 
     protected $fillable = [
         'message_id',
