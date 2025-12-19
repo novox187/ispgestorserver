@@ -30,6 +30,7 @@ Route::get('/clientes/full/{id}', [ClientController::class, 'showFull']);
 Route::post('/clientes/crear', [ClienteController::class, 'store']);
 // Planes con features
 Route::get('/planes/summary', [AdminPlanController::class, 'listSummary']);
+Route::post('/planes', [AdminPlanController::class, 'store']);
 Route::put('/planes/{id}', [AdminPlanController::class, 'update']);
 Route::put('/planes/{id}/status', [AdminPlanController::class, 'setStatus']);
 });
