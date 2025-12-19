@@ -22,78 +22,92 @@ class TransactionSeeder extends Seeder
             return;
         }
 
-        $this->command->info('Creando transacciones para ' . $wallets->count() . ' billeteras...');
+        $this->command->info('Generando historial de transacciones lógico para ' . $wallets->count() . ' billeteras...');
 
         $totalTransactions = 0;
 
         foreach ($wallets as $wallet) {
-            // Crear entre 3 y 8 transacciones por billetera
-            $numberOfTransactions = rand(3, 8);
+            // Resetear balance a 0 para reconstruirlo desde el historial
+            $currentBalance = 0.00;
+            
+            // Determinar fecha de inicio (ej. hace 3-6 meses)
+            $transactionDate = now()->subDays(rand(90, 180));
+            
+            // Número de transacciones a generar
+            $numberOfTransactions = rand(5, 15);
             
             for ($i = 0; $i < $numberOfTransactions; $i++) {
-                $this->createTransaction($wallet, $i);
+                // Avanzar el tiempo aleatoriamente (entre 2 y 15 días)
+                $transactionDate->addDays(rand(2, 15))->addHours(rand(1, 12));
+                
+                if ($transactionDate > now()) {
+                    break; // No crear transacciones en el futuro
+                }
+
+                // Decidir tipo de transacción
+                // Si el balance es bajo, forzar depósito con alta probabilidad
+                if ($currentBalance < 20) {
+                    $type = 'deposit';
+                } else {
+                    // Distribución normal
+                    $rand = rand(1, 100);
+                    if ($rand <= 30) $type = 'deposit';
+                    elseif ($rand <= 80) $type = 'payment'; // Pago de servicios
+                    elseif ($rand <= 95) $type = 'withdrawal';
+                    else $type = 'refund';
+                }
+
+                // Generar monto
+                $amount = $this->generateAmount($type);
+
+                // Validar fondos para salidas de dinero
+                if (in_array($type, ['payment', 'withdrawal'])) {
+                    if ($currentBalance < $amount) {
+                        // Si no hay fondos, crear un depósito previo
+                        $depositAmount = $amount + rand(10, 50); // Cubrir el gasto y sobrar algo
+                        $this->createTransaction($wallet, 'deposit', $depositAmount, $transactionDate->copy()->subMinutes(30));
+                        $currentBalance += $depositAmount;
+                        $totalTransactions++;
+                    }
+                }
+
+                // Crear la transacción principal
+                $this->createTransaction($wallet, $type, $amount, $transactionDate);
+                
+                // Actualizar balance temporal
+                if (in_array($type, ['deposit', 'refund'])) {
+                    $currentBalance += $amount;
+                } else {
+                    $currentBalance -= $amount;
+                }
+                
                 $totalTransactions++;
             }
 
-            $this->command->info("{$numberOfTransactions} transacciones creadas para: {$wallet->client->full_name}");
+            // Actualizar el balance final de la billetera
+            $wallet->balance = $currentBalance;
+            $wallet->save();
         }
 
-        $this->command->info("¡Se crearon {$totalTransactions} transacciones en total!");
+        $this->command->info("¡Se crearon {$totalTransactions} transacciones lógicas y se actualizaron los balances!");
     }
 
     /**
-     * Crear una transacción para una billetera
+     * Crear una transacción individual
      */
-    private function createTransaction(Wallet $wallet, int $index): void
+    private function createTransaction(Wallet $wallet, string $type, float $amount, \DateTime $date): void
     {
-        $type = $this->getTransactionType($wallet->balance, $index);
-        $amount = $this->generateAmount($type);
-        $description = $this->generateDescription($type, $amount);
-
         Transaction::create([
             'wallet_id' => $wallet->id,
             'type' => $type,
             'amount' => $amount,
-            'description' => $description,
+            'description' => $this->generateDescription($type, $amount),
             'reference' => $this->generateReference($type),
             'status' => 'completed',
             'metadata' => $this->generateMetadata($type),
-            'created_at' => $this->generateDate($index),
-            'updated_at' => now(),
+            'created_at' => $date,
+            'updated_at' => $date,
         ]);
-
-        // Actualizar el balance de la billetera según la transacción
-        $this->updateWalletBalance($wallet, $type, $amount);
-    }
-
-    /**
-     * Determinar el tipo de transacción
-     */
-    private function getTransactionType(float $currentBalance, int $index): string
-    {
-        // Para las primeras transacciones, favorecer depósitos
-        if ($index < 2) {
-            return 'deposit';
-        }
-
-        // Si el saldo es muy bajo, favorecer depósitos
-        if ($currentBalance < 10) {
-            $weights = ['deposit' => 80, 'payment' => 15, 'withdrawal' => 5];
-        } else {
-            $weights = ['deposit' => 40, 'payment' => 35, 'withdrawal' => 20, 'refund' => 5];
-        }
-
-        $random = rand(1, 100);
-        $cumulative = 0;
-
-        foreach ($weights as $type => $weight) {
-            $cumulative += $weight;
-            if ($random <= $cumulative) {
-                return $type;
-            }
-        }
-
-        return 'deposit';
     }
 
     /**
@@ -102,11 +116,11 @@ class TransactionSeeder extends Seeder
     private function generateAmount(string $type): float
     {
         return match($type) {
-            'deposit' => rand(10, 200) + (rand(0, 99) / 100), // $10 - $200
-            'withdrawal' => rand(5, 100) + (rand(0, 99) / 100), // $5 - $100
-            'payment' => rand(8, 80) + (rand(0, 99) / 100), // $8 - $80
-            'refund' => rand(15, 120) + (rand(0, 99) / 100), // $15 - $120
-            default => rand(5, 50) + (rand(0, 99) / 100),
+            'deposit' => rand(20, 200) + (rand(0, 99) / 100),
+            'withdrawal' => rand(10, 100) + (rand(0, 99) / 100),
+            'payment' => rand(15, 60) + (rand(0, 99) / 100), // Precios típicos de planes
+            'refund' => rand(5, 50) + (rand(0, 99) / 100),
+            default => rand(10, 50),
         };
     }
 
@@ -117,35 +131,23 @@ class TransactionSeeder extends Seeder
     {
         $descriptions = [
             'deposit' => [
-                "Recarga de saldo",
-                "Depósito desde tarjeta",
-                "Transferencia recibida",
-                "Recarga manual",
-                "Pago recibido"
+                "Recarga de saldo", "Depósito bancario", "Transferencia recibida", 
+                "Carga via Stripe", "Depósito en efectivo"
             ],
             'withdrawal' => [
-                "Retiro de fondos",
-                "Transferencia enviada",
-                "Retiro a cuenta bancaria",
-                "Reembolso solicitado"
+                "Retiro de fondos", "Transferencia a cuenta propia"
             ],
             'payment' => [
-                "Pago de servicio mensual",
-                "Pago automático - Suscripción",
-                "Factura de servicios",
-                "Pago de cuota",
-                "Renovación de servicio"
+                "Pago de mensualidad internet", "Renovación de servicio", 
+                "Pago de factura #".rand(1000,9999), "Compra de IP estática"
             ],
             'refund' => [
-                "Reembolso de pago",
-                "Devolución de fondos",
-                "Corrección de cargo",
-                "Reembolso por servicio no prestado"
+                "Reembolso por ajuste", "Devolución de saldo a favor"
             ]
         ];
 
         $options = $descriptions[$type] ?? ['Transacción general'];
-        return $options[array_rand($options)] . " - $" . number_format($amount, 2);
+        return $options[array_rand($options)];
     }
 
     /**
@@ -155,13 +157,13 @@ class TransactionSeeder extends Seeder
     {
         $prefix = match($type) {
             'deposit' => 'DEP',
-            'withdrawal' => 'WITH',
+            'withdrawal' => 'WTH',
             'payment' => 'PAY',
             'refund' => 'REF',
             default => 'TXN'
         };
 
-        return $prefix . '_' . strtoupper(uniqid());
+        return $prefix . '-' . strtoupper(uniqid());
     }
 
     /**
@@ -170,60 +172,14 @@ class TransactionSeeder extends Seeder
     private function generateMetadata(string $type): ?array
     {
         $metadata = [
-            'ip_address' => '192.168.' . rand(1, 255) . '.' . rand(1, 255),
-            'user_agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'device' => ['Windows', 'MacOS', 'Linux', 'Android', 'iOS'][rand(0, 4)]
+            'ip' => '192.168.' . rand(1, 255) . '.' . rand(1, 255),
+            'channel' => ['web', 'app', 'admin'][rand(0, 2)]
         ];
 
-        // Metadata específica por tipo
-        switch ($type) {
-            case 'payment':
-                $metadata['service_type'] = ['Internet', 'Hosting', 'Software', 'Membresía'][rand(0, 3)];
-                $metadata['billing_cycle'] = ['monthly', 'quarterly', 'yearly'][rand(0, 2)];
-                break;
-            case 'deposit':
-                $metadata['payment_method'] = ['credit_card', 'debit_card', 'bank_transfer', 'cash'][rand(0, 3)];
-                break;
-            case 'refund':
-                $metadata['reason'] = ['duplicate_charge', 'service_issue', 'customer_request'][rand(0, 2)];
-                break;
+        if ($type === 'payment') {
+            $metadata['invoice_id'] = rand(10000, 99999);
         }
 
         return $metadata;
-    }
-
-    /**
-     * Generar fecha realista (transacciones en los últimos 60 días)
-     */
-    private function generateDate(int $index): string
-    {
-        $daysAgo = rand(0, 60); // Últimos 60 días
-        $hours = rand(0, 23);
-        $minutes = rand(0, 59);
-        
-        return now()->subDays($daysAgo)->subHours($hours)->subMinutes($minutes);
-    }
-
-    /**
-     * Actualizar balance de la billetera
-     */
-    private function updateWalletBalance(Wallet $wallet, string $type, float $amount): void
-    {
-        switch ($type) {
-            case 'deposit':
-            case 'refund':
-                $wallet->balance += $amount;
-                break;
-            case 'withdrawal':
-            case 'payment':
-                $wallet->balance -= $amount;
-                // Asegurar que el balance no sea negativo
-                if ($wallet->balance < 0) {
-                    $wallet->balance = 0;
-                }
-                break;
-        }
-
-        $wallet->save();
     }
 }

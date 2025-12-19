@@ -23,20 +23,23 @@ class ClientFactory extends Factory
     {
         $nombre = $this->faker->firstName();
         $apellido = $this->faker->lastName();
+        $createdAt = $this->faker->dateTimeBetween('-2 years', 'now');
         
         return [
             'full_name' => "{$nombre} {$apellido}",
             'document_id' => $this->faker->unique()->numerify('##########'), // 10 dígitos únicos
-            'contact_phone' => $this->faker->unique()->numerify('########'), // 8 dígitos
+            'contact_phone' => $this->faker->unique()->numerify('##########'), // 10 dígitos estándar
             'email' => $this->faker->unique()->safeEmail(),
-            'password' => Hash::make('perro'),
+            'password' => Hash::make('perro'), // Contraseña por defecto para pruebas
             'installation_address' => $this->faker->address(),
             'gps_coordinates' => $this->faker->latitude() . ',' . $this->faker->longitude(),
-            'contract_date' => $this->faker->dateTimeBetween('-2 years', 'now')->format('Y-m-d'),
+            'contract_date' => $createdAt->format('Y-m-d'),
             'service_status' => $this->faker->randomElement(['ACTIVE', 'LIMITED', 'SUSPENDED', 'CANCELLED']),
             'ip' => $this->faker->ipv4(),
             'observations' => $this->faker->optional(0.2)->sentence(), // 20% de probabilidad de tener observaciones
             'remember_token' => Str::random(10),
+            'created_at' => $createdAt,
+            'updated_at' => $createdAt,
         ];
     } // ← QUITÉ EL } EXTRA QUE ESTABA AQUÍ
 

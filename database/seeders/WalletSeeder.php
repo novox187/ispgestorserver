@@ -50,15 +50,6 @@ class WalletSeeder extends Seeder
      */
     private function generateInitialBalance(): float
     {
-        $balances = [
-            0.00,    // Algunos clientes sin saldo
-            25.00,   // Saldo bajo
-            50.00,   // Saldo medio
-            100.00,  // Saldo bueno
-            250.00,  // Saldo alto
-            500.00,  // Saldo muy alto
-        ];
-
-        return $balances[array_rand($balances)];
+        return 0.00; // El balance se calculará basado en las transacciones en TransactionSeeder
     }
 }

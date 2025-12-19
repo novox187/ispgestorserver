@@ -16,17 +16,26 @@ class ClientPlanFactory extends Factory
         $client = Client::inRandomOrder()->first() ?? Client::factory()->create();
         $plan = Plan::active()->inRandomOrder()->first() ?? Plan::factory()->create();
 
-        $startDate = $this->faker->dateTimeBetween('-1 year', 'now');
-        $billingCycle = $this->faker->randomElement(['monthly', 'quarterly', 'yearly']);
+        // Asegurar que la fecha de inicio sea posterior a la fecha de contrato del cliente
+        $minDate = $client->contract_date ? new \DateTime($client->contract_date) : new \DateTime('-1 year');
+        $startDate = $this->faker->dateTimeBetween($minDate, 'now');
         
-        $nextBillingDate = $this->calculateNextBillingDate($startDate, $billingCycle);
+        $billingCycle = $this->faker->randomElement(['monthly', 'quarterly', 'yearly']);
+        $status = $this->faker->randomElement(['active', 'active', 'active', 'suspended', 'cancelled']);
+        
+        $endDate = null;
+        if ($status === 'cancelled' || $status === 'suspended') {
+            $endDate = $this->faker->dateTimeBetween($startDate, 'now');
+        }
+
+        $nextBillingDate = $this->calculateNextBillingDate($status === 'active' ? new \DateTime() : $startDate, $billingCycle);
 
         return [
-            'client_id' => $client->id, // Solo id, no cliente_id
+            'client_id' => $client->id,
             'plan_id' => $plan->id,
-            'status' => $this->faker->randomElement(['active', 'active', 'active', 'suspended', 'cancelled']),
+            'status' => $status,
             'start_date' => $startDate,
-            'end_date' => $this->faker->optional(0.3)->dateTimeBetween($startDate, '+1 year'),
+            'end_date' => $endDate,
             'next_billing_date' => $nextBillingDate,
             'current_price' => $plan->monthly_price,
             'billing_cycle' => $billingCycle,

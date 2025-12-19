@@ -17,35 +17,43 @@ class ClientPlanSeeder extends Seeder
         $clients = Client::all();
         $plans = Plan::all();
 
-        foreach ($clients as $client) {
-            ClientPlan::factory()
-                ->forClient($client)
-                ->forPlan($plans->random())
-                ->active()
-                ->withIp()
-                ->create();
+        if ($clients->isEmpty() || $plans->isEmpty()) {
+            $this->command->warn('No hay clientes o planes para generar suscripciones.');
+            return;
         }
 
-        // Crear algunos planes suspendidos
-        ClientPlan::factory()
-            ->count(5)
-            ->suspended()
-            ->create();
+        foreach ($clients as $client) {
+            // 80% de probabilidad de tener un plan ACTIVO
+            $hasActivePlan = rand(1, 100) <= 80;
 
-        // Crear planes que vencen pronto
-        ClientPlan::factory()
-            ->count(3)
-            ->expiringSoon()
-            ->create();
+            if ($hasActivePlan) {
+                // Crear UN plan activo
+                ClientPlan::factory()
+                    ->forClient($client)
+                    ->forPlan($plans->random())
+                    ->active()
+                    ->withIp()
+                    ->create();
+            } else {
+                // Si no tiene activo, tiene uno suspendido o cancelado (estado actual)
+                $status = rand(1, 100) <= 50 ? 'suspended' : 'cancelled';
+                if ($status === 'suspended') {
+                    ClientPlan::factory()->forClient($client)->forPlan($plans->random())->suspended()->create();
+                } else {
+                    ClientPlan::factory()->forClient($client)->forPlan($plans->random())->cancelled()->create();
+                }
+            }
 
-        // Plan con precio personalizado (promoción)
-        ClientPlan::factory()
-            ->forClient($clients->first())
-            ->forPlan($plans->first())
-            ->withCustomPrice(19.99)
-            ->active()
-            ->create();
+            // 30% de probabilidad de tener historial (planes antiguos cancelados)
+            if (rand(1, 100) <= 30) {
+                ClientPlan::factory()
+                    ->forClient($client)
+                    ->forPlan($plans->random())
+                    ->cancelled() // Usar estado cancelled explícito para fechas pasadas
+                    ->create();
+            }
+        }
 
-        $this->command->info('ClientPlans creados: ' . count(ClientPlan::all()));
+        $this->command->info('ClientPlans creados correctamente. Se garantizó un máximo de 1 plan activo por cliente.');
     }
 }
