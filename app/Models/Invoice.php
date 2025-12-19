@@ -4,11 +4,12 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use App\Traits\Auditable;
 
 class Invoice extends Model
 {
-    use HasFactory, Auditable;
+    use HasFactory, Auditable, SoftDeletes;
 
     protected $fillable = ['client_id', 'client_plan_id', 'invoice_number', 'issue_date', 'due_date', 'amount', 'tax_amount', 'total_amount', 'status', 'payment_method', 'paid_at', 'payment_reference', 'description', 'metadata'];
 
@@ -63,6 +64,31 @@ class Invoice extends Model
     public function transaction()
     {
         return $this->hasOne(Transaction::class, 'reference', 'payment_reference');
+    }
+
+    /**
+     * Scope para filtrar facturas
+     */
+    public function scopeFilter($query, array $filters)
+    {
+        $query->when($filters['search'] ?? null, function ($query, $search) {
+            $query->where(function ($query) use ($search) {
+                $query->where('invoice_number', 'like', '%'.$search.'%')
+                      ->orWhereHas('client', function ($query) use ($search) {
+                          $query->where('full_name', 'like', '%'.$search.'%')
+                                ->orWhere('email', 'like', '%'.$search.'%')
+                                ->orWhere('document_id', 'like', '%'.$search.'%');
+                      });
+            });
+        })->when($filters['status'] ?? null, function ($query, $status) {
+            $query->where('status', $status);
+        })->when($filters['date_from'] ?? null, function ($query, $date) {
+            $query->whereDate('issue_date', '>=', $date);
+        })->when($filters['date_to'] ?? null, function ($query, $date) {
+            $query->whereDate('issue_date', '<=', $date);
+        })->when($filters['client_id'] ?? null, function ($query, $clientId) {
+            $query->where('client_id', $clientId);
+        });
     }
 
     /**

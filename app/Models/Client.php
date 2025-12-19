@@ -39,6 +39,18 @@ class Client extends Authenticatable
         'contract_date' => 'date',
     ];
 
+    protected $appends = ['name', 'dni'];
+
+    public function getNameAttribute()
+    {
+        return $this->full_name;
+    }
+
+    public function getDniAttribute()
+    {
+        return $this->document_id;
+    }
+
     /**
      * Obtén los planes del cliente para el cliente.
      */
