@@ -172,7 +172,7 @@ class TransactionSeeder extends Seeder
     private function generateMetadata(string $type): ?array
     {
         $metadata = [
-            'ip' => '192.168.' . rand(1, 255) . '.' . rand(1, 255),
+            'ip' => '192.168.20.' . rand(10, 254),
             'channel' => ['web', 'app', 'admin'][rand(0, 2)]
         ];
 

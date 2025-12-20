@@ -35,7 +35,7 @@ class ClientFactory extends Factory
             'gps_coordinates' => $this->faker->latitude() . ',' . $this->faker->longitude(),
             'contract_date' => $createdAt->format('Y-m-d'),
             'service_status' => $this->faker->randomElement(['ACTIVE', 'LIMITED', 'SUSPENDED', 'CANCELLED']),
-            'ip' => $this->faker->ipv4(),
+            'ip' => '192.168.20.' . $this->faker->unique()->numberBetween(10, 254),
             'observations' => $this->faker->optional(0.2)->sentence(), // 20% de probabilidad de tener observaciones
             'remember_token' => Str::random(10),
             'created_at' => $createdAt,
@@ -51,7 +51,7 @@ class ClientFactory extends Factory
         return $this->state(function (array $attributes) {
             return [
                 'service_status' => 'ACTIVE', // Cambié 'activo' por 'ACTIVO' para coincidir con el definition
-                'ip' => $this->faker->ipv4(), // Activos siempre tienen IP
+                'ip' => '192.168.20.' . $this->faker->unique()->numberBetween(10, 254), // Activos siempre tienen IP
             ];
         });
     }
@@ -102,7 +102,7 @@ class ClientFactory extends Factory
     {
         return $this->state(function (array $attributes) {
             return [
-                'ip' => $this->faker->ipv4(),
+                'ip' => '192.168.20.' . $this->faker->unique()->numberBetween(10, 254),
             ];
         });
     }

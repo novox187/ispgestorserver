@@ -201,7 +201,7 @@ class ClientPlanFactory extends Factory
     {
         return $this->state(function (array $attributes) {
             return [
-                'ip_address' => $this->faker->ipv4(),
+                'ip_address' => '192.168.20.' . $this->faker->unique()->numberBetween(10, 254),
                 'mikrotik_queue_id' => $this->faker->regexify('\*[0-9]{1,3}'),
             ];
         });
