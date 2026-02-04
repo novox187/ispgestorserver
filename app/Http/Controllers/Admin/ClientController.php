@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Client;
+use App\Models\Plan;
 use App\Models\Audit;
 use App\Services\MikroTikService;
 use Illuminate\Support\Facades\DB;
@@ -132,6 +133,105 @@ class ClientController extends Controller
             ->findOrFail($id);
 
         return response()->json($client);
+    }
+
+    /**
+     * Actualizar cliente: Datos básicos, plan y registro de auditoría con motivo
+     */
+    public function update(Request $request, $id)
+    {
+        $request->validate([
+            'full_name' => 'required|string|max:255',
+            'document_id' => 'required|string|max:50',
+            'email' => 'required|email|max:255',
+            'reason' => 'required|string|min:5',
+        ]);
+
+        $client = Client::findOrFail($id);
+        
+        DB::beginTransaction();
+        try {
+            $oldValues = $client->toArray();
+            
+            // 1. Actualizar datos básicos
+            $client->fill($request->except(['reason', 'plan_id', 'plan']));
+            
+            $changes = [];
+            if ($client->isDirty()) {
+                $changes = $client->getDirty();
+                // Desactivamos eventos para evitar doble log si usamos Auditable, 
+                // ya que haremos un log manual más rico con el 'reason'
+                $client->unsetEventDispatcher(); 
+                $client->save();
+            }
+
+            // 2. Gestión de cambio de plan (básico en DB)
+            $planChanged = false;
+            $oldPlanName = 'N/A';
+            $newPlanName = 'N/A';
+
+            if ($request->has('plan_id')) {
+                 $newPlanId = $request->plan_id;
+                 // Obtener plan actual activo
+                 $currentPlan = $client->clientPlans()
+                        ->where('status', 'active')
+                        ->where(function ($q) {
+                            $q->whereNull('end_date')->orWhere('end_date', '>=', now());
+                        })
+                        ->orderByDesc('start_date')
+                        ->first();
+                 
+                 $currentPlanId = $currentPlan ? $currentPlan->plan_id : null;
+                 $oldPlanName = $currentPlan && $currentPlan->plan ? $currentPlan->plan->name : 'Ninguno';
+
+                 // Si el plan es diferente (o no tenía plan y ahora sí)
+                 if ($newPlanId != $currentPlanId) {
+                     // Cerrar plan anterior
+                     if ($currentPlan) {
+                         $currentPlan->update(['end_date' => now(), 'status' => 'inactive']);
+                     }
+                     
+                     // Crear nuevo plan si se seleccionó uno válido
+                     if ($newPlanId) {
+                         $newPlan = Plan::find($newPlanId);
+                         $price = $newPlan ? $newPlan->monthly_price : 0;
+                         
+                         $client->clientPlans()->create([
+                             'plan_id' => $newPlanId,
+                             'start_date' => now(),
+                             'next_billing_date' => now()->addMonth(),
+                             'current_price' => $price,
+                             'status' => 'active',
+                         ]);
+                         $newPlanName = $newPlan ? $newPlan->name : "ID: $newPlanId";
+                     }
+                     $planChanged = true;
+                 }
+            }
+
+            // 3. Auditoría Manual con Motivo
+            Audit::create([
+                'table_name' => 'clients',
+                'operation' => 'UPDATE_DETAILS',
+                'record_id' => (string) $client->id,
+                'old_values' => array_merge($oldValues, ['plan_name' => $oldPlanName]),
+                'new_values' => array_merge($client->toArray(), [
+                    'reason' => $request->reason,
+                    'plan_changed' => $planChanged,
+                    'new_plan_name' => $newPlanName
+                ]),
+                'user_id' => Auth::id(),
+                'ip_address' => $request->ip(),
+            ]);
+
+            DB::commit();
+            return response()->json(['success' => true, 'message' => 'Cliente actualizado correctamente', 'client' => $client]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error("Error actualizando cliente ID {$id}: " . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'Error actualizando cliente: ' . $e->getMessage()], 500);
+        }
     }
 
     /**
