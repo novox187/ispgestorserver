@@ -5,6 +5,11 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Client;
+use App\Models\Audit;
+use App\Services\MikroTikService;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 
 class ClientController extends Controller
 {
@@ -123,5 +128,228 @@ class ClientController extends Controller
             ->findOrFail($id);
 
         return response()->json($client);
+    }
+
+    /**
+     * Suspender cliente: Actualiza DB, bloquea en Mikrotik y registra auditoría
+     */
+    public function suspend(Request $request, $id, MikroTikService $mikrotik)
+    {
+        Log::info("Iniciando proceso de suspensión para cliente ID: {$id}", ['user' => Auth::id()]);
+        
+        try {
+            $client = Client::findOrFail($id);
+        } catch (\Exception $e) {
+             Log::error("Cliente no encontrado para suspensión: {$id}");
+             return response()->json(['success' => false, 'message' => 'Cliente no encontrado'], 404);
+        }
+
+        // Validaciones previas
+        if (in_array(strtoupper($client->service_status), ['SUSPENDIDO', 'SUSPENDED'])) {
+            Log::warning("Intento de suspender cliente ya suspendido: {$id}");
+            return response()->json(['success' => false, 'message' => 'El cliente ya está suspendido'], 400);
+        }
+
+        if (!$client->ip) {
+             Log::warning("Intento de suspender cliente sin IP: {$id}");
+             return response()->json(['success' => false, 'message' => 'El cliente no tiene IP asignada para bloquear'], 400);
+        }
+
+        // Validar conexión Mikrotik
+        try {
+            Log::info("Verificando conexión con Mikrotik...");
+            $sysInfo = $mikrotik->getSystemInfo();
+            if (empty($sysInfo)) {
+                throw new \Exception('No hay conexión con el router MikroTik (Respuesta vacía)');
+            }
+            Log::info("Conexión Mikrotik OK.");
+        } catch (\Exception $e) {
+             Log::error("Error de conexión Mikrotik previo a suspensión: " . $e->getMessage());
+             return response()->json(['success' => false, 'message' => 'Error de conectividad Mikrotik: ' . $e->getMessage()], 503);
+        }
+
+        DB::beginTransaction();
+        Log::info("Transacción DB iniciada.");
+
+        try {
+            $oldStatus = $client->service_status;
+            
+            // 1. Intentar bloquear en Mikrotik (Address List "morosos")
+            Log::info("Enviando comando a Mikrotik para agregar IP {$client->ip} a address-list 'morosos'");
+            
+            $mkResult = $mikrotik->addIpToAddressList(
+                $client->ip, 
+                'morosos', 
+                "Suspendido por falta de pago - Cliente ID: {$client->id} - " . now()->format('Y-m-d H:i')
+            );
+
+            if (!$mkResult['success']) {
+                Log::error("Fallo Mikrotik: " . json_encode($mkResult));
+                throw new \Exception("Fallo al agregar a Address List en Mikrotik: " . $mkResult['message']);
+            }
+            
+            Log::info("Mikrotik OK: IP agregada/verificada en lista morosos.");
+
+            // 2. Actualizar estado en DB
+            $client->service_status = 'suspended';
+            $client->save(); // Esto disparará el trait Auditable para el cambio de estado
+            Log::info("Estado de cliente actualizado en DB a 'suspended'.");
+
+            // 3. Registro detallado de auditoría técnica (según requerimiento)
+            Audit::create([
+                'table_name' => 'clients',
+                'operation' => 'SUSPEND_TECH_OP',
+                'record_id' => (string) $client->id,
+                'old_values' => ['service_status' => $oldStatus],
+                'new_values' => [
+                    'service_status' => 'suspended',
+                    'ip' => $client->ip,
+                    'mikrotik_operation' => 'add_to_address_list',
+                    'mikrotik_list' => 'morosos',
+                    'mikrotik_response' => $mkResult,
+                    'timestamp' => now()->toIso8601String(),
+                    'executor' => Auth::user()->name ?? 'Unknown'
+                ],
+                'user_id' => Auth::id(),
+                'ip_address' => $request->ip(),
+            ]);
+
+            DB::commit();
+            Log::info("Transacción DB commiteada exitosamente. Proceso finalizado.");
+
+            return response()->json([
+                'success' => true, 
+                'message' => 'Cliente suspendido exitosamente',
+                'details' => $mkResult
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error("Error CRÍTICO suspendiendo cliente ID {$id}", [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+                'client_ip' => $client->ip ?? 'N/A',
+                'user_id' => Auth::id()
+            ]);
+            
+            return response()->json([
+                'success' => false, 
+                'message' => 'Error interno al suspender: ' . $e->getMessage(),
+                'debug_id' => $id
+            ], 500);
+        }
+    }
+
+    /**
+     * Activar cliente: Revierte suspensión, actualiza DB y remueve de Mikrotik
+     */
+    public function activate(Request $request, $id, MikroTikService $mikrotik)
+    {
+        Log::info("Iniciando proceso de activación para cliente ID: {$id}", ['user' => Auth::id()]);
+        
+        try {
+            $client = Client::findOrFail($id);
+        } catch (\Exception $e) {
+             Log::error("Cliente no encontrado para activación: {$id}");
+             return response()->json(['success' => false, 'message' => 'Cliente no encontrado'], 404);
+        }
+
+        // Validaciones previas
+        if (!in_array(strtoupper($client->service_status), ['SUSPENDIDO', 'SUSPENDED', 'LIMITADO'])) {
+            Log::warning("Intento de activar cliente que no está suspendido: {$id} (Estado: {$client->service_status})");
+            return response()->json(['success' => false, 'message' => 'El cliente no está suspendido'], 400);
+        }
+
+        if (!$client->ip) {
+             Log::warning("Intento de activar cliente sin IP: {$id}");
+             return response()->json(['success' => false, 'message' => 'El cliente no tiene IP asignada'], 400);
+        }
+
+        // Validar conexión Mikrotik
+        try {
+            Log::info("Verificando conexión con Mikrotik...");
+            $sysInfo = $mikrotik->getSystemInfo();
+            if (empty($sysInfo)) {
+                throw new \Exception('No hay conexión con el router MikroTik (Respuesta vacía)');
+            }
+            Log::info("Conexión Mikrotik OK.");
+        } catch (\Exception $e) {
+             Log::error("Error de conexión Mikrotik previo a activación: " . $e->getMessage());
+             return response()->json(['success' => false, 'message' => 'Error de conectividad Mikrotik: ' . $e->getMessage()], 503);
+        }
+
+        DB::beginTransaction();
+        Log::info("Transacción DB iniciada (Activación).");
+
+        try {
+            $oldStatus = $client->service_status;
+            
+            // 1. Intentar remover bloqueo en Mikrotik (Address List "morosos")
+            Log::info("Enviando comando a Mikrotik para remover IP {$client->ip} de address-list 'morosos'");
+            
+            $mkResult = $mikrotik->removeIpFromAddressList(
+                $client->ip, 
+                'morosos'
+            );
+
+            if (!$mkResult['success']) {
+                Log::error("Fallo Mikrotik al remover: " . json_encode($mkResult));
+                throw new \Exception("Fallo al remover de Address List en Mikrotik: " . $mkResult['message']);
+            }
+            
+            Log::info("Mikrotik OK: IP removida de lista morosos.");
+
+            // 2. Actualizar estado en DB
+            $client->service_status = 'active';
+            $client->save(); 
+            Log::info("Estado de cliente actualizado en DB a 'active'.");
+
+            // 3. Registro detallado de auditoría técnica
+            Audit::create([
+                'table_name' => 'clients',
+                'operation' => 'ACTIVATE_TECH_OP',
+                'record_id' => (string) $client->id,
+                'old_values' => ['service_status' => $oldStatus],
+                'new_values' => [
+                    'service_status' => 'active',
+                    'ip' => $client->ip,
+                    'mikrotik_operation' => 'remove_from_address_list',
+                    'mikrotik_list' => 'morosos',
+                    'mikrotik_response' => $mkResult,
+                    'timestamp' => now()->toIso8601String(),
+                    'executor' => Auth::user()->name ?? 'Unknown'
+                ],
+                'user_id' => Auth::id(),
+                'ip_address' => $request->ip(),
+            ]);
+
+            DB::commit();
+            Log::info("Transacción DB (Activación) commiteada exitosamente.");
+
+            return response()->json([
+                'success' => true, 
+                'message' => 'Cliente activado exitosamente',
+                'details' => $mkResult
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error("Error CRÍTICO activando cliente ID {$id}", [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+                'client_ip' => $client->ip ?? 'N/A',
+                'user_id' => Auth::id()
+            ]);
+            
+            return response()->json([
+                'success' => false, 
+                'message' => 'Error interno al activar: ' . $e->getMessage(),
+                'debug_id' => $id
+            ], 500);
+        }
     }
 }

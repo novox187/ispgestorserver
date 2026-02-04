@@ -239,73 +239,144 @@ private function calculateSignalQuality(string $signalStrength): string
 /* PLAN CLIENTE */
 
 public function getClientQueues(string $clientIp): array
-{
-    if (!$this->client) {
-        return [
-            'found' => false,
-            'error' => true,
-            'message' => 'Cliente MikroTik no configurado correctamente'
-        ];
-    }
-
-    try {
-        // Obtener todas las queues
-        $query = new Query('/queue/simple/print');
-        $queues = $this->client->query($query)->read();
-
-        // Filtrar queues que contengan la IP del cliente
-        $clientQueues = array_filter($queues, function($queue) use ($clientIp) {
-            $target = $queue['target'] ?? '';
-            
-            // Buscar la IP en el campo target (puede estar en formato IP, IP/mask, etc.)
-            return str_contains($target, $clientIp);
-        });
-
-        // Filtrar solo las queues con parent = "none"
-        $clientQueues = array_filter($queues, function($queue) {
-            $parent = $queue['parent'] ?? 'none';
-            return $parent === 'none';
-        });
-
-        // Formatear la información de las queues
-        $formattedQueues = [];
-        foreach ($clientQueues as $queue) {
-            $maxLimit = $this->parseBandwidth($queue['max-limit'] ?? '0/0');
-            $currentRate = $this->parseBandwidth($queue['rate'] ?? '0/0');
-            
-            $formattedQueues[] = [
-                'id' => $queue['.id'] ?? '',
-                'name' => $queue['name'] ?? '',
-                
-                // Límites de ancho de banda
-                'max_limit' => $queue['max-limit'] ?? '0/0',
-                'max_limit_upload' => $this->formatBandwidth($maxLimit['upload']),
-                'max_limit_download' => $this->formatBandwidth($maxLimit['download']),
-                
-                // Límite garantizado
-                'limit_at' => $queue['limit-at'] ?? '0/0',
-                 
-                'bytes' => $queue['bytes'] ?? '0/0',
+    {
+        if (!$this->client) {
+            return [
+                'found' => false,
+                'error' => true,
+                'message' => 'Cliente MikroTik no configurado correctamente'
             ];
         }
 
-        return [
-            'found' => count($formattedQueues) > 0,
-            'count' => count($formattedQueues),
-            'queues' => $formattedQueues
-        ];
+        try {
+            // Obtener todas las queues
+            $query = new Query('/queue/simple/print');
+            $queues = $this->client->query($query)->read();
 
-    } catch (Exception $e) {
-        Log::error('MikroTik Client Queues Error: ' . $e->getMessage());
-        return [
-            'found' => false,
-            'error' => true,
-            'message' => 'Error de conexión con el router MikroTik: ' . $e->getMessage()
-        ];
+            // Filtrar queues que contengan la IP del cliente
+            $clientQueues = array_filter($queues, function($queue) use ($clientIp) {
+                $target = $queue['target'] ?? '';
+                
+                // Buscar la IP en el campo target (puede estar en formato IP, IP/mask, etc.)
+                return str_contains($target, $clientIp);
+            });
+
+            // Filtrar solo las queues con parent = "none"
+            $clientQueues = array_filter($queues, function($queue) {
+                $parent = $queue['parent'] ?? 'none';
+                return $parent === 'none';
+            });
+
+            // Formatear la información de las queues
+            $formattedQueues = [];
+            foreach ($clientQueues as $queue) {
+                $maxLimit = $this->parseBandwidth($queue['max-limit'] ?? '0/0');
+                $currentRate = $this->parseBandwidth($queue['rate'] ?? '0/0');
+                
+                $formattedQueues[] = [
+                    'id' => $queue['.id'] ?? '',
+                    'name' => $queue['name'] ?? '',
+                    
+                    // Límites de ancho de banda
+                    'max_limit' => $queue['max-limit'] ?? '0/0',
+                    'max_limit_upload' => $this->formatBandwidth($maxLimit['upload']),
+                    'max_limit_download' => $this->formatBandwidth($maxLimit['download']),
+                    
+                    // Límite garantizado
+                    'limit_at' => $queue['limit-at'] ?? '0/0',
+                     
+                    'bytes' => $queue['bytes'] ?? '0/0',
+                ];
+            }
+
+            return [
+                'found' => count($formattedQueues) > 0,
+                'count' => count($formattedQueues),
+                'queues' => $formattedQueues
+            ];
+
+        } catch (Exception $e) {
+            Log::error('MikroTik Client Queues Error: ' . $e->getMessage());
+            return [
+                'found' => false,
+                'error' => true,
+                'message' => 'Error consultando queues en MikroTik: ' . $e->getMessage()
+            ];
+        }
     }
-}
 
-private function parseBandwidth(string $bandwidth): array
+    public function addIpToAddressList(string $ip, string $listName, string $comment = ''): array
+    {
+        if (!$this->client) {
+            return ['success' => false, 'message' => 'Cliente MikroTik no inicializado'];
+        }
+
+        try {
+            // Verificar si ya existe
+            $print = new Query('/ip/firewall/address-list/print');
+            $print->where('list', $listName);
+            $print->where('address', $ip);
+            $exists = $this->client->query($print)->read();
+
+            if (!empty($exists)) {
+                 return ['success' => true, 'message' => 'La IP ya está en la lista', 'already_exists' => true];
+            }
+
+            $add = new Query('/ip/firewall/address-list/add');
+            $add->equal('list', $listName);
+            $add->equal('address', $ip);
+            if ($comment) {
+                $add->equal('comment', $comment);
+            }
+            
+            $result = $this->client->query($add)->read();
+            
+            // Verificar si se creó (algunos errores de RouterOS vienen en read(), otros lanzan excepción)
+            if (isset($result['!trap'])) {
+                 return ['success' => false, 'message' => $result['!trap'][0]['message'] ?? 'Error desconocido de MikroTik'];
+            }
+
+            return ['success' => true, 'message' => 'IP agregada a la lista correctamente'];
+
+        } catch (Exception $e) {
+            Log::error('MikroTik Add Address List Error: ' . $e->getMessage());
+            return ['success' => false, 'message' => $e->getMessage()];
+        }
+    }
+
+    public function removeIpFromAddressList(string $ip, string $listName): array
+    {
+        if (!$this->client) {
+            return ['success' => false, 'message' => 'Cliente MikroTik no inicializado'];
+        }
+
+        try {
+            // Buscar el ID de la entrada
+            $print = new Query('/ip/firewall/address-list/print');
+            $print->where('list', $listName);
+            $print->where('address', $ip);
+            $entries = $this->client->query($print)->read();
+
+            if (empty($entries)) {
+                return ['success' => true, 'message' => 'La IP no estaba en la lista (ya removida o nunca existió)', 'not_found' => true];
+            }
+
+            // Eliminar todas las coincidencias (normalmente debería ser una)
+            foreach ($entries as $entry) {
+                $remove = new Query('/ip/firewall/address-list/remove');
+                $remove->equal('.id', $entry['.id']);
+                $this->client->query($remove)->read();
+            }
+
+            return ['success' => true, 'message' => 'IP removida de la lista correctamente'];
+
+        } catch (Exception $e) {
+            Log::error('MikroTik Remove Address List Error: ' . $e->getMessage());
+            return ['success' => false, 'message' => $e->getMessage()];
+        }
+    }
+
+    private function parseBandwidth(string $bandwidth): array
 {
     // Convierte "10M/5M" a [upload, download] en bits/segundo
     $parts = explode('/', $bandwidth);

@@ -28,6 +28,8 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
 // Listado resumido y detalle completo de un cliente
 Route::get('/clientes/summary', [ClientController::class, 'listSummary']);
 Route::get('/clientes/full/{id}', [ClientController::class, 'showFull']);
+Route::post('/clientes/{id}/suspend', [ClientController::class, 'suspend']);
+Route::post('/clientes/{id}/activate', [ClientController::class, 'activate']);
 // Crear cliente (público/admin segun protección que se agregue)
 Route::post('/clientes/crear', [ClienteController::class, 'store']);
 // Planes con features
