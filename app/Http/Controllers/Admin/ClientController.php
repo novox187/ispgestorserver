@@ -48,6 +48,10 @@ class ClientController extends Controller
             }
         }
 
+        // Ordenar: Clientes 'cancelled' al final
+        $query->orderByRaw("CASE WHEN service_status = 'cancelled' THEN 1 ELSE 0 END")
+              ->orderBy('id');
+
         // Carga clientes y su plan activo más reciente (si existe)
         $paginator = $query->with(['clientPlans' => function ($q) {
                 $q->where('status', 'active')
@@ -349,6 +353,68 @@ class ClientController extends Controller
                 'success' => false, 
                 'message' => 'Error interno al activar: ' . $e->getMessage(),
                 'debug_id' => $id
+            ], 500);
+        }
+    }
+
+    /**
+     * Cancelar cliente: Marca el estado como 'cancelled' (Eliminación lógica)
+     */
+    public function cancel(Request $request, $id)
+    {
+        Log::info("Iniciando proceso de cancelación para cliente ID: {$id}", ['user' => Auth::id()]);
+        
+        try {
+            $client = Client::findOrFail($id);
+        } catch (\Exception $e) {
+             Log::error("Cliente no encontrado para cancelación: {$id}");
+             return response()->json(['success' => false, 'message' => 'Cliente no encontrado'], 404);
+        }
+
+        // Validación: Solo permitir eliminar si está suspendido
+        if (!in_array(strtoupper($client->service_status), ['SUSPENDIDO', 'SUSPENDED'])) {
+            Log::warning("Intento de cancelar cliente no suspendido: {$id} (Estado: {$client->service_status})");
+            return response()->json([
+                'success' => false, 
+                'message' => 'Solo se pueden eliminar clientes que estén suspendidos.'
+            ], 400);
+        }
+
+        DB::beginTransaction();
+        try {
+            $oldStatus = $client->service_status;
+            
+            $client->service_status = 'cancelled';
+            $client->save();
+
+            Audit::create([
+                'table_name' => 'clients',
+                'operation' => 'CANCEL_OP',
+                'record_id' => (string) $client->id,
+                'old_values' => ['service_status' => $oldStatus],
+                'new_values' => [
+                    'service_status' => 'cancelled',
+                    'timestamp' => now()->toIso8601String(),
+                    'executor' => Auth::user()->name ?? 'Unknown'
+                ],
+                'user_id' => Auth::id(),
+                'ip_address' => $request->ip(),
+            ]);
+
+            DB::commit();
+            Log::info("Cliente ID {$id} cancelado exitosamente.");
+
+            return response()->json([
+                'success' => true, 
+                'message' => 'Cliente eliminado/cancelado exitosamente'
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error("Error cancelando cliente ID {$id}: " . $e->getMessage());
+            return response()->json([
+                'success' => false, 
+                'message' => 'Error al cancelar cliente: ' . $e->getMessage()
             ], 500);
         }
     }
