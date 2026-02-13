@@ -48,6 +48,278 @@ class MikroTikQueueSyncService
         return $uploadMbps . 'M/' . $downloadMbps . 'M';
     }
 
+    protected function normalizePlanQueueName(Plan $plan): string
+    {
+        $name = trim((string) ($plan->mikrotik_queue_name ?: $plan->name ?: $plan->slug ?: ''));
+        return $name === '' ? 'plan_' . $plan->id : $name;
+    }
+
+    protected function normalizeClientQueueName(Client $client): string
+    {
+        $name = trim((string) ($client->full_name ?: 'cliente_' . $client->id));
+        $name = strtolower($name);
+        $name = preg_replace('/\s+/', '_', $name);
+        $name = preg_replace('/_+/', '_', $name);
+        return trim($name, '_');
+    }
+
+    protected function normalizeSpeedValue(?string $value): string
+    {
+        $raw = trim((string) ($value ?? ''));
+        if ($raw === '' || $raw === '0') {
+            return '0';
+        }
+        $raw = strtoupper(str_replace(' ', '', $raw));
+        if (preg_match('/^\d+(\.\d+)?[KMG]$/', $raw)) {
+            return $raw;
+        }
+        if (preg_match('/^\d+(\.\d+)?$/', $raw)) {
+            return $raw . 'M';
+        }
+        $raw = str_replace(['KB', 'MB', 'GB'], ['K', 'M', 'G'], $raw);
+        return $raw;
+    }
+
+    protected function formatSpeedPairFromStrings(string $upload, string $download): string
+    {
+        $u = $this->normalizeSpeedValue($upload);
+        $d = $this->normalizeSpeedValue($download);
+        return $u . '/' . $d;
+    }
+
+    protected function formatMbps(float $mbps): string
+    {
+        if ($mbps <= 0) {
+            return '0';
+        }
+        if ($mbps < 1) {
+            $kbps = (int) round($mbps * 1000);
+            return max(1, $kbps) . 'K';
+        }
+        if ($mbps >= 1000) {
+            $g = round($mbps / 1000, 2);
+            $text = rtrim(rtrim((string) $g, '0'), '.');
+            return $text . 'G';
+        }
+        $m = round($mbps, 2);
+        $text = rtrim(rtrim((string) $m, '0'), '.');
+        return $text . 'M';
+    }
+
+    protected function calculatePercentSpeed(string $value, float $percent): string
+    {
+        $mbps = $this->toMbps($this->normalizeSpeedValue($value));
+        $result = $mbps * ($percent / 100);
+        return $this->formatMbps($result);
+    }
+
+    protected function buildPlanTargetIps(Plan $plan): array
+    {
+        $ips = [];
+        $list = ClientPlan::query()
+            ->with('client')
+            ->where('plan_id', $plan->id)
+            ->where('status', 'active')
+            ->get();
+        foreach ($list as $cp) {
+            $ip = $cp->ip_address ?: $cp->client?->ip;
+            if ($ip && filter_var($ip, FILTER_VALIDATE_IP)) {
+                $ips[$ip] = true;
+            }
+        }
+        $targets = array_keys($ips);
+        sort($targets);
+        return $targets;
+    }
+
+    protected function buildPlanQueueParams(Plan $plan, array $targets): array
+    {
+        $upload = $plan->upload_limit ?: ($plan->upload_speed ? $plan->upload_speed . 'M' : '0');
+        $download = $plan->download_limit ?: ($plan->download_speed ? $plan->download_speed . 'M' : '0');
+        $target = count($targets) ? implode(',', $targets) : '0.0.0.0/0';
+        return [
+            'name' => $this->normalizePlanQueueName($plan),
+            'target' => $target,
+            'parent' => 'none',
+            'max-limit' => $this->formatSpeedPairFromStrings($upload, $download),
+            'limit-at' => $this->formatSpeedPairFromStrings($upload, $download),
+        ];
+    }
+
+    protected function buildClientQueueParams(Client $client, Plan $plan, string $parentName, string $ip): array
+    {
+        $upload = $plan->upload_limit ?: ($plan->upload_speed ? $plan->upload_speed . 'M' : '0');
+        $download = $plan->download_limit ?: ($plan->download_speed ? $plan->download_speed . 'M' : '0');
+        $maxLimit = $this->formatSpeedPairFromStrings($upload, $download);
+        $limitAt = $this->formatSpeedPairFromStrings(
+            $this->calculatePercentSpeed($upload, 10),
+            $this->calculatePercentSpeed($download, 10)
+        );
+        return [
+            'name' => $this->normalizeClientQueueName($client),
+            'target' => $ip,
+            'parent' => $parentName,
+            'max-limit' => $maxLimit,
+            'limit-at' => $limitAt,
+        ];
+    }
+
+    protected function upsertQueue(string $name, array $params): array
+    {
+        $existing = $this->findQueueByName($name);
+        if (!$existing) {
+            $created = $this->withRetries(function () use ($params) {
+                return $this->createSimpleQueue($params);
+            });
+            $this->auditMikroTik('INSERT', $name, null, $params);
+            return [
+                'action' => 'created',
+                'name' => $name,
+                'queue' => $this->findQueueByName($name),
+                'router_result' => $created,
+            ];
+        }
+        $changes = [];
+        foreach ($params as $key => $value) {
+            if ($key === 'name') {
+                continue;
+            }
+            $current = $existing[$key] ?? null;
+            if ((string) $current !== (string) $value) {
+                $changes[$key] = ['from' => $current, 'to' => $value];
+            }
+        }
+        if (!$changes) {
+            return [
+                'action' => 'skipped',
+                'name' => $name,
+                'queue' => $existing,
+            ];
+        }
+        $set = new Query('/queue/simple/set');
+        $set->equal('.id', $existing['.id']);
+        foreach ($params as $key => $value) {
+            if ($key === 'name') {
+                continue;
+            }
+            $set->equal($key, $value);
+        }
+        $result = $this->mikrotik->runQuery($set);
+        $this->auditMikroTik('UPDATE', $name, $existing, $params);
+        return [
+            'action' => 'updated',
+            'name' => $name,
+            'changes' => $changes,
+            'queue' => $this->findQueueByName($name),
+            'router_result' => $result,
+        ];
+    }
+
+    public function syncQueues(bool $cleanup = false): array
+    {
+        if (!$this->mikrotik->getClient()) {
+            throw new \RuntimeException('MikroTik no conectado: verifica MIKROTIK_HOST/USER/PASS y permisos');
+        }
+        $planResults = [];
+        $clientResults = [];
+        $expectedPlanNames = [];
+        $expectedClientNames = [];
+        $plans = Plan::query()->where('is_active', true)->get();
+        foreach ($plans as $plan) {
+            $targets = $this->buildPlanTargetIps($plan);
+            $params = $this->buildPlanQueueParams($plan, $targets);
+            $name = $params['name'];
+            $expectedPlanNames[] = $name;
+            $planResults[] = [
+                'plan_id' => $plan->id,
+                'name' => $name,
+                'result' => $this->upsertQueue($name, $params),
+            ];
+        }
+        $list = ClientPlan::query()
+            ->with(['client', 'plan'])
+            ->where('status', 'active')
+            ->get();
+        foreach ($list as $cp) {
+            $client = $cp->client;
+            $plan = $cp->plan;
+            if (!$client || !$plan) {
+                $clientResults[] = [
+                    'client_plan_id' => $cp->id,
+                    'error' => 'Relaciones faltantes',
+                ];
+                continue;
+            }
+            $ip = $cp->ip_address ?: $client->ip;
+            if (!$ip || !filter_var($ip, FILTER_VALIDATE_IP)) {
+                $clientResults[] = [
+                    'client_id' => $client->id,
+                    'plan_id' => $plan->id,
+                    'ip' => $ip,
+                    'skipped_reason' => 'IP inválida o vacía',
+                ];
+                continue;
+            }
+            $parentName = $this->normalizePlanQueueName($plan);
+            $params = $this->buildClientQueueParams($client, $plan, $parentName, $ip);
+            $name = $params['name'];
+            $expectedClientNames[] = $name;
+            $clientResults[] = [
+                'client_id' => $client->id,
+                'plan_id' => $plan->id,
+                'name' => $name,
+                'result' => $this->upsertQueue($name, $params),
+            ];
+        }
+        $cleanupResult = null;
+        if ($cleanup) {
+            $cleanupResult = $this->cleanupQueues($expectedPlanNames, $expectedClientNames);
+        }
+        return [
+            'plans' => $planResults,
+            'clients' => $clientResults,
+            'cleanup' => $cleanupResult,
+        ];
+    }
+
+    protected function cleanupQueues(array $expectedPlanNames, array $expectedClientNames): array
+    {
+        $query = new Query('/queue/simple/print');
+        $query->equal('.proplist', '.id,name,parent');
+        $queues = $this->withRetries(function () use ($query) {
+            return $this->mikrotik->runQuery($query);
+        });
+        $deleted = [];
+        foreach ($queues as $queue) {
+            $name = $queue['name'] ?? '';
+            $parent = $queue['parent'] ?? 'none';
+            if ($parent !== 'none' && in_array($parent, $expectedPlanNames, true)) {
+                if (!in_array($name, $expectedClientNames, true)) {
+                    if (!empty($queue['.id'])) {
+                        $del = new Query('/queue/simple/remove');
+                        $del->equal('.id', $queue['.id']);
+                        $this->mikrotik->runQuery($del);
+                        $deleted[] = $name;
+                        $this->auditMikroTik('DELETE', $name, $queue, null);
+                    }
+                }
+            }
+            if ($parent === 'none' && !in_array($name, $expectedPlanNames, true)) {
+                if (!empty($queue['.id'])) {
+                    $del = new Query('/queue/simple/remove');
+                    $del->equal('.id', $queue['.id']);
+                    $this->mikrotik->runQuery($del);
+                    $deleted[] = $name;
+                    $this->auditMikroTik('DELETE', $name, $queue, null);
+                }
+            }
+        }
+        return [
+            'deleted' => $deleted,
+            'deleted_count' => count($deleted),
+        ];
+    }
+
     protected function parsePair(string $pair): array
     {
         $parts = explode('/', $pair);
