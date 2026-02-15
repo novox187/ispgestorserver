@@ -54,13 +54,19 @@ class MikroTikQueueSyncService
         return $name === '' ? 'plan_' . $plan->id : $name;
     }
 
+    /* Funcion funcional */
     protected function normalizeClientQueueName(Client $client): string
     {
         $name = trim((string) ($client->full_name ?: 'cliente_' . $client->id));
         $name = strtolower($name);
         $name = preg_replace('/\s+/', '_', $name);
         $name = preg_replace('/_+/', '_', $name);
-        return trim($name, '_');
+        $name = trim($name, '_');
+        $documentId = trim((string) ($client->document_id ?? ''));
+        if ($documentId !== '') {
+            return $name . '_' . $documentId;
+        }
+        return $name;
     }
 
     protected function normalizeSpeedValue(?string $value): string
