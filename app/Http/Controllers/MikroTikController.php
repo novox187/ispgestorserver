@@ -7,10 +7,13 @@ use App\Services\MikroTikService;
 use App\Services\MikroTikQueueSyncService;
 use App\Models\Plan;
 use App\Models\Client;
+use App\Models\Employee;
+use App\Models\Audit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Bus;
 
 class MikroTikController extends Controller
 {
@@ -268,6 +271,117 @@ public function syncAll(): JsonResponse
         return response()->json([
             'success' => false,
             'message' => 'Error sincronizando planes y clientes',
+            'error' => $e->getMessage(),
+        ], 500);
+    }
+}
+
+public function syncQueuesCleanup(Request $request): JsonResponse
+{
+    $user = $request->user();
+    if (!$user) {
+        return response()->json([
+            'success' => false,
+            'status' => 'unauthenticated',
+            'message' => 'Usuario no autenticado',
+        ], 401);
+    }
+    if (!$user instanceof Employee) {
+        return response()->json([
+            'success' => false,
+            'status' => 'forbidden',
+            'message' => 'Acceso restringido a empleados',
+        ], 403);
+    }
+    $async = $request->boolean('async', false);
+    if ($async) {
+        $userId = $user->id;
+        $ip = $request->ip();
+        Bus::dispatch(function () use ($userId, $ip) {
+            $mikrotik = app(MikroTikService::class);
+            $sync = app(MikroTikQueueSyncService::class);
+            $sys = $mikrotik->getSystemInfo();
+            if (empty($sys)) {
+                throw new \RuntimeException('No hay conexión con MikroTik. Revisa MIKROTIK_HOST/USER/PASS y permisos.');
+            }
+            $writeCheck = $mikrotik->testSimpleQueueWrite();
+            if (!$writeCheck['success']) {
+                throw new \RuntimeException('La cuenta no puede escribir en /queue/simple. Habilita API y permisos write.');
+            }
+            $result = $sync->syncQueues(true);
+            $summary = [
+                'plans_count' => count($result['plans'] ?? []),
+                'clients_count' => count($result['clients'] ?? []),
+                'cleanup_deleted' => $result['cleanup']['deleted_count'] ?? 0,
+            ];
+            Audit::create([
+                'table_name' => 'mikrotik_queue_sync',
+                'operation' => 'SYNC',
+                'record_id' => 'cleanup',
+                'old_values' => null,
+                'new_values' => $summary,
+                'user_id' => $userId,
+                'ip_address' => $ip,
+            ]);
+        });
+        return response()->json([
+            'success' => true,
+            'status' => 'queued',
+            'message' => 'Sincronización encolada',
+            'data' => [
+                'async' => true,
+            ],
+        ], 202);
+    }
+    try {
+        $sys = $this->mikrotik->getSystemInfo();
+        if (empty($sys)) {
+            return response()->json([
+                'success' => false,
+                'status' => 'unavailable',
+                'message' => 'No hay conexión con MikroTik. Revisa MIKROTIK_HOST/USER/PASS y permisos.',
+            ], 503);
+        }
+        $writeCheck = $this->mikrotik->testSimpleQueueWrite();
+        if (!$writeCheck['success']) {
+            return response()->json([
+                'success' => false,
+                'status' => 'forbidden',
+                'message' => 'La cuenta no puede escribir en /queue/simple. Habilita API y permisos write.',
+                'diagnostic' => $writeCheck,
+            ], 403);
+        }
+        $result = $this->sync->syncQueues(true);
+        $summary = [
+            'plans_count' => count($result['plans'] ?? []),
+            'clients_count' => count($result['clients'] ?? []),
+            'cleanup_deleted' => $result['cleanup']['deleted_count'] ?? 0,
+        ];
+        Audit::create([
+            'table_name' => 'mikrotik_queue_sync',
+            'operation' => 'SYNC',
+            'record_id' => 'cleanup',
+            'old_values' => null,
+            'new_values' => $summary,
+            'user_id' => $user->id,
+            'ip_address' => $request->ip(),
+        ]);
+        return response()->json([
+            'success' => true,
+            'status' => 'completed',
+            'message' => 'Sincronización completada con limpieza',
+            'summary' => $summary,
+            'data' => $result,
+        ]);
+    } catch (\Exception $e) {
+        Log::error('Error sincronizando queues con limpieza', [
+            'error' => $e->getMessage(),
+            'user_id' => $user->id,
+        ]);
+        return response()->json([
+            'success' => false,
+            'status' => 'failed',
+            'message' => 'Error sincronizando queues con limpieza',
             'error' => $e->getMessage(),
         ], 500);
     }
