@@ -61,14 +61,17 @@ trait Auditable
             }
         }
 
+        $user = Auth::user();
+
         Audit::create([
             'table_name' => $model->getTable(),
             'operation' => $operation,
             'record_id' => (string) $model->getKey(),
             'old_values' => $oldValues,
             'new_values' => $newValues,
-            'user_id' => Auth::id(), // ID del usuario autenticado o null
-            'ip_address' => Request::ip(), // IP del cliente
+            'user_id' => $user ? $user->id : null,
+            'user_type' => $user ? get_class($user) : null,
+            'ip_address' => Request::ip(),
         ]);
     }
 }

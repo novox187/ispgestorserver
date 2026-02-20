@@ -14,6 +14,7 @@ use App\Http\Controllers\MessageController;
 use App\Http\Controllers\Admin\ClientController;
 use App\Http\Controllers\AuthEmployeeController;
 use App\Http\Controllers\Admin\PlanController as AdminPlanController;
+use App\Http\Controllers\Admin\EmployeeController as AdminEmployeeController;
 
 use App\Http\Controllers\Admin\InvoiceController as AdminInvoiceController;
 
@@ -34,6 +35,15 @@ Route::post('/clientes/{id}/cancel', [ClientController::class, 'cancel']);
 Route::put('/clientes/{id}', [ClientController::class, 'update']);
 // Crear cliente (público/admin segun protección que se agregue)
 Route::post('/clientes/crear', [ClienteController::class, 'store']);
+
+// Empleados
+Route::get('/roles', [AdminEmployeeController::class, 'getRoles']);
+Route::get('/employees', [AdminEmployeeController::class, 'listSummary']);
+Route::get('/employees/{id}', [AdminEmployeeController::class, 'show']);
+Route::post('/employees', [AdminEmployeeController::class, 'store']);
+Route::put('/employees/{id}', [AdminEmployeeController::class, 'update']);
+Route::delete('/employees/{id}', [AdminEmployeeController::class, 'destroy']);
+
 // Planes con features
 Route::get('/planes/summary', [AdminPlanController::class, 'listSummary']);
 Route::post('/planes', [AdminPlanController::class, 'store']);

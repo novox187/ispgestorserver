@@ -17,6 +17,7 @@ class Audit extends Model
         'old_values',
         'new_values',
         'user_id',
+        'user_type',
         'ip_address',
     ];
 
@@ -27,10 +28,10 @@ class Audit extends Model
     ];
 
     /**
-     * Relación con el usuario que realizó la acción.
+     * Relación polimórfica con el usuario que realizó la acción.
      */
-    public function user(): BelongsTo
+    public function user()
     {
-        return $this->belongsTo(User::class);
+        return $this->morphTo();
     }
 }
