@@ -60,6 +60,14 @@ class Client extends Authenticatable
     }
 
     /**
+     * Obtén las facturas del cliente.
+     */
+    public function invoices(): HasMany
+    {
+        return $this->hasMany(Invoice::class);
+    }
+
+    /**
      * Obtén los servicios del cliente para el cliente.
      */
     public function servicios(): HasMany
@@ -81,7 +89,7 @@ class Client extends Authenticatable
      */
     public function scopeActive($query)
     {
-        return $query->where('service_status', 'ACTIVO');
+        return $query->whereIn('service_status', ['ACTIVO', 'ACTIVE']);
     }
 
     /**
@@ -89,7 +97,7 @@ class Client extends Authenticatable
      */
     public function scopeInactive($query)
     {
-        return $query->where('service_status', 'INACTIVO');
+        return $query->whereIn('service_status', ['INACTIVO', 'INACTIVE']);
     }
 
     /**
@@ -97,7 +105,7 @@ class Client extends Authenticatable
      */
     public function scopeSuspended($query)
     {
-        return $query->where('service_status', 'SUSPENDIDO');
+        return $query->whereIn('service_status', ['SUSPENDIDO', 'SUSPENDED']);
     }
 
     /**
@@ -105,7 +113,7 @@ class Client extends Authenticatable
      */
     public function scopeLimited($query)
     {
-        return $query->where('service_status', 'LIMITADO');
+        return $query->whereIn('service_status', ['LIMITADO', 'LIMITED']);
     }
 
     /**
@@ -121,7 +129,7 @@ class Client extends Authenticatable
      */
     public function isActive(): bool
     {
-        return $this->service_status === 'ACTIVO';
+        return in_array($this->service_status, ['ACTIVO', 'ACTIVE']);
     }
 
     /**

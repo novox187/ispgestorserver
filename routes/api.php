@@ -15,7 +15,7 @@ use App\Http\Controllers\Admin\ClientController;
 use App\Http\Controllers\AuthEmployeeController;
 use App\Http\Controllers\Admin\PlanController as AdminPlanController;
 use App\Http\Controllers\Admin\EmployeeController as AdminEmployeeController;
-
+use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\InvoiceController as AdminInvoiceController;
 
 Route::get('/user', function (Request $request) {
@@ -27,7 +27,8 @@ Route::get('/user', function (Request $request) {
 // Rutas para la administracion
 Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
 // Listado resumido y detalle completo de un cliente
-Route::get('/clientes/summary', [ClientController::class, 'listSummary']);
+    Route::get('/dashboard/stats', [DashboardController::class, 'stats']);
+    Route::get('/clientes/summary', [ClientController::class, 'listSummary']);
 Route::get('/clientes/full/{id}', [ClientController::class, 'showFull']);
 Route::post('/clientes/{id}/suspend', [ClientController::class, 'suspend']);
 Route::post('/clientes/{id}/activate', [ClientController::class, 'activate']);
