@@ -129,6 +129,9 @@ class ClientController extends Controller
                 'clientPlans.plan',
                 // 'servicios', // Relación deshabilitada: modelo no disponible
                 'soportes',
+                'invoices' => function ($q) {
+                    $q->orderByDesc('issue_date');
+                }
             ])
             ->findOrFail($id);
 

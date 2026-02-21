@@ -37,6 +37,24 @@ class DashboardController extends Controller
         ]);
     }
 
+    public function topDebtors()
+    {
+        $debtors = Client::whereHas('invoices', function($query) {
+                $query->whereIn('status', ['pending', 'failed']);
+            })
+            ->withSum(['invoices as total_debt' => function($query) {
+                $query->whereIn('status', ['pending', 'failed']);
+            }], 'total_amount')
+            ->withCount(['invoices as pending_invoices_count' => function($query) {
+                $query->whereIn('status', ['pending', 'failed']);
+            }])
+            ->orderByDesc('total_debt')
+            ->take(5)
+            ->get(['id', 'full_name', 'email']);
+
+        return response()->json($debtors);
+    }
+
     public function chart(Request $request)
     {
         // Default to current year
