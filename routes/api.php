@@ -28,6 +28,7 @@ Route::get('/user', function (Request $request) {
 Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
 // Listado resumido y detalle completo de un cliente
     Route::get('/dashboard/stats', [DashboardController::class, 'stats']);
+    Route::get('/dashboard/chart', [DashboardController::class, 'chart']);
     Route::get('/clientes/summary', [ClientController::class, 'listSummary']);
 Route::get('/clientes/full/{id}', [ClientController::class, 'showFull']);
 Route::post('/clientes/{id}/suspend', [ClientController::class, 'suspend']);
