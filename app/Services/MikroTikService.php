@@ -155,7 +155,6 @@ class MikroTikService
         }
 
         try {
-            // Contamos solo las queues que no estén deshabilitadas
             $query = new Query('/queue/simple/print');
             $query->where('disabled', 'false');
             $queues = $this->client->query($query)->read();
