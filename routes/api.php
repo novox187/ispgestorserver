@@ -25,9 +25,10 @@ Route::get('/user', function (Request $request) {
 // Clientes con relaciones
 
 // Rutas para la administracion
-Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
-// Listado resumido y detalle completo de un cliente
-    Route::get('/dashboard/stats', [DashboardController::class, 'stats']);
+    Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
+    // Listado resumido y detalle completo de un cliente
+    Route::get('/dashboard/full-stats', [DashboardController::class, 'fullStats']); // Nueva ruta unificada
+    // Route::get('/dashboard/stats', [DashboardController::class, 'stats']); // Deprecada
     Route::get('/dashboard/top-debtors', [DashboardController::class, 'topDebtors']);
     Route::get('/dashboard/chart', [DashboardController::class, 'chart']);
     Route::get('/clientes/summary', [ClientController::class, 'listSummary']);

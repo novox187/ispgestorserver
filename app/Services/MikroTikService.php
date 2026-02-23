@@ -148,6 +148,25 @@ class MikroTikService
         }
     }
 
+    public function countActiveQueues(): int
+    {
+        if (!$this->client) {
+            return 0;
+        }
+
+        try {
+            // Contamos solo las queues que no estén deshabilitadas
+            $query = new Query('/queue/simple/print');
+            $query->where('disabled', 'false');
+            $queues = $this->client->query($query)->read();
+            
+            return count($queues);
+        } catch (Exception $e) {
+            Log::error('MikroTik Active Queues Count Error: ' . $e->getMessage());
+            return 0;
+        }
+    }
+
 
 
 public function getWifiDeviceByIp(string $ipAddress): array

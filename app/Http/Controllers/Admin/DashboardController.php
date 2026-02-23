@@ -8,10 +8,70 @@ use App\Models\Invoice;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+use App\Services\MikroTikService;
+use Illuminate\Support\Facades\Log;
+
 class DashboardController extends Controller
 {
     /**
-     * Get dashboard statistics.
+     * Get dashboard statistics (DB + MikroTik).
+     */
+    public function fullStats(MikroTikService $mikroTikService)
+    {
+        // 1. Database Statistics
+        $activeUsers = Client::active()->count();
+        
+        $usersWithDebt = Client::whereHas('invoices', function($query) {
+            $query->pendingOrFailed();
+        })->count();
+
+        $inactiveUsers = Client::whereIn('service_status', [
+            'INACTIVE', 'INACTIVO', 
+            'SUSPENDED', 'SUSPENDIDO', 
+            'CANCELLED', 'CANCELADO'
+        ])->count();
+
+        // 2. MikroTik Statistics
+        $mikrotikData = [
+            'online' => false,
+            'cpu_load' => '0%',
+            'uptime' => 'Offline',
+            'active_clients' => 0,
+            'total_clients' => 150 // Capacidad estimada, podría ser config
+        ];
+
+        try {
+            // System Info
+            $systemInfo = $mikroTikService->getSystemInfo();
+            
+            if (!empty($systemInfo) && isset($systemInfo[0])) {
+                $info = $systemInfo[0];
+                $mikrotikData['online'] = true;
+                $mikrotikData['cpu_load'] = ($info['cpu-load'] ?? '0') . '%';
+                $mikrotikData['uptime'] = $info['uptime'] ?? '0m';
+                
+                // Wireless Clients (Only fetch if system is reachable)
+                $wirelessClients = $mikroTikService->getWirelessClients();
+                $mikrotikData['active_clients'] = is_array($wirelessClients) ? count($wirelessClients) : 0;
+                
+                // Active Queues (Total de clientes configurados en el router)
+                $mikrotikData['total_clients'] = $mikroTikService->countActiveQueues();
+            }
+        } catch (\Exception $e) {
+            Log::error('Dashboard FullStats MikroTik Error: ' . $e->getMessage());
+            // Mantener valores por defecto (offline)
+        }
+
+        return response()->json([
+            'active_users' => $activeUsers,
+            'users_with_debt' => $usersWithDebt,
+            'inactive_users' => $inactiveUsers,
+            'mikrotik' => $mikrotikData
+        ]);
+    }
+
+    /**
+     * Get dashboard statistics (Legacy - Deprecated).
      */
     public function stats()
     {
