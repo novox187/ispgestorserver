@@ -12,6 +12,11 @@ use Illuminate\Validation\Rule;
 
 class EmployeeController extends Controller
 {
+    public function profile(Request $request)
+    {
+        return $this->show($request->user()->id);
+    }
+
     public function getRoles()
     {
         $roles = DB::table('roles')->select('id', 'nombre', 'slug')->get();

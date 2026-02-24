@@ -18,9 +18,7 @@ use App\Http\Controllers\Admin\EmployeeController as AdminEmployeeController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\InvoiceController as AdminInvoiceController;
 
-Route::get('/user', function (Request $request) {
-    return $request->user();
-})->middleware('auth:sanctum');
+Route::get('/user', [AdminEmployeeController::class, 'profile'])->middleware('auth:sanctum');
 
 // Clientes con relaciones
 
@@ -42,7 +40,7 @@ Route::post('/clientes/crear', [ClienteController::class, 'store']);
 // Empleados
 Route::get('/roles', [AdminEmployeeController::class, 'getRoles']);
 Route::get('/employees', [AdminEmployeeController::class, 'listSummary']);
-Route::get('/employees/{id}', [AdminEmployeeController::class, 'show']);
+Route::get('/employees/show/{id}', [AdminEmployeeController::class, 'show']);
 Route::post('/employees', [AdminEmployeeController::class, 'store']);
 Route::put('/employees/{id}', [AdminEmployeeController::class, 'update']);
 Route::delete('/employees/{id}', [AdminEmployeeController::class, 'destroy']);
