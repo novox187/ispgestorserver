@@ -39,6 +39,7 @@ class AuthEmployeeController extends Controller
         }
 
         $authEmployee = Auth::guard('employee')->user();
+        
         if (!$authEmployee) {
             Log::error('Login empleado: guard retornó null tras attempt', [
                 'email' => $credentials['email'],
@@ -48,6 +49,10 @@ class AuthEmployeeController extends Controller
                 'email' => ['No se pudo autenticar al empleado.'],
             ]);
         }
+
+        // Cargar relación de rol
+        $authEmployee->load('role');
+
         $token = $authEmployee->createToken('employee-api')->plainTextToken;
         Log::info('Login empleado: éxito', [
             'employee_id' => $authEmployee->id,
@@ -62,6 +67,8 @@ class AuthEmployeeController extends Controller
                 'id' => $authEmployee->id,
                 'email' => $authEmployee->email,
                 'nombre' => $authEmployee->nombre,
+                'role' => $authEmployee->role ? $authEmployee->role->nombre : 'Sin Rol',
+                'role_slug' => $authEmployee->role ? $authEmployee->role->slug : null,
             ],
         ]);
     }
