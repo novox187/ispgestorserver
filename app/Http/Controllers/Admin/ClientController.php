@@ -44,6 +44,15 @@ class ClientController extends Controller
             } elseif ($status === 'inactive') {
                  $query->whereIn('service_status', ['inactive', 'INACTIVO', 'Inactive'])
                        ->orWhereNull('service_status');
+            } elseif ($status === 'without_plan') {
+                 // Filtrar clientes que NO tienen un plan activo vigente
+                 $query->whereDoesntHave('clientPlans', function ($q) {
+                     $q->where('status', 'active')
+                       ->where(function ($qq) {
+                           $qq->whereNull('end_date')
+                              ->orWhere('end_date', '>=', now());
+                       });
+                 });
             } else {
                  $query->where('service_status', $status);
             }
@@ -62,7 +71,7 @@ class ClientController extends Controller
                   })
                   ->orderByDesc('start_date');
             }, 'clientPlans.plan'])
-            ->select(['id', 'full_name', 'email', 'contact_phone', 'service_status'])
+            ->select(['id', 'full_name', 'email', 'contact_phone', 'service_status','document_id'])
             ->paginate($perPage);
 
         // Transformar la colección dentro del paginador
@@ -71,6 +80,7 @@ class ClientController extends Controller
             return [
                 'id' => $client->id,
                 'name' => $client->full_name,
+                'document_id' => $client->document_id, // Agregado para poder reenviarlo en actualizaciones
                 'email' => $client->email,
                 'phone' => $client->contact_phone,
                 'plan' => $currentPlan && $currentPlan->plan ? $currentPlan->plan->name : null,
@@ -145,7 +155,7 @@ class ClientController extends Controller
     {
         $request->validate([
             'full_name' => 'required|string|max:255',
-            'document_id' => 'required|string|max:50',
+            'document_id' => 'required|string|max:50|unique:clients,document_id,' . $id, // Ignorar ID actual
             'email' => 'required|email|max:255',
             'reason' => 'required|string|min:5',
         ]);
@@ -205,6 +215,7 @@ class ClientController extends Controller
                              'next_billing_date' => now()->addMonth(),
                              'current_price' => $price,
                              'status' => 'active',
+                             'ip_address' => $client->ip // Guardar la IP del cliente en la relación
                          ]);
                          $newPlanName = $newPlan ? $newPlan->name : "ID: $newPlanId";
                      }

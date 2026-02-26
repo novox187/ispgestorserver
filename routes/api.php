@@ -47,12 +47,20 @@ Route::delete('/employees/{id}', [AdminEmployeeController::class, 'destroy']);
 
 // Planes con features
 Route::get('/planes/summary', [AdminPlanController::class, 'listSummary']);
+Route::get('/plans', [AdminPlanController::class, 'index']); // Nueva ruta para listado simple
 Route::post('/planes', [AdminPlanController::class, 'store']);
 Route::put('/planes/{id}', [AdminPlanController::class, 'update']);
 Route::put('/planes/{id}/status', [AdminPlanController::class, 'setStatus']);
 
 // Facturas Admin
-Route::apiResource('invoices', AdminInvoiceController::class);
+    Route::apiResource('invoices', AdminInvoiceController::class);
+
+    // Import Routes
+    Route::get('/import/template/{table}', [App\Http\Controllers\Admin\ImportController::class, 'downloadTemplate']);
+    Route::post('/import/validate', [App\Http\Controllers\Admin\ImportController::class, 'validateImport']);
+    Route::post('/import/process', [App\Http\Controllers\Admin\ImportController::class, 'processImport']);
+    Route::get('/import/history', [App\Http\Controllers\Admin\ImportController::class, 'history']);
+    Route::post('/import/rollback/{id}', [App\Http\Controllers\Admin\ImportController::class, 'rollback']);
 });
 
 

@@ -15,6 +15,27 @@ use Throwable;
 class PlanController extends Controller
 {
     public function __construct(protected MikroTikQueueSyncService $queueSync) {}
+
+    public function index()
+    {
+        $plans = Plan::with(['features' => function ($q) {
+            $q->ordered();
+        }])->ordered()->get();
+
+        $data = $plans->map(function (Plan $p) {
+            return [
+                'id' => $p->id,
+                'name' => $p->name,
+                'price' => (float) $p->monthly_price,
+                'download_speed' => (int) $p->download_speed,
+                'upload_speed' => (int) $p->upload_speed,
+                'status' => $p->is_active ? 'active' : 'inactive',
+            ];
+        });
+
+        return response()->json(['data' => $data]);
+    }
+
     public function listSummary(Request $request)
     {
         $plans = Plan::with(['features' => function ($q) {
