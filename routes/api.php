@@ -23,8 +23,8 @@ Route::get('/user', [AdminEmployeeController::class, 'profile'])->middleware('au
 // Clientes con relaciones
 
 // Rutas para la administracion
-    Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
-    // Listado resumido y detalle completo de un cliente
+Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
+    // Dashboard
     Route::get('/dashboard/full-stats', [DashboardController::class, 'fullStats']);
     Route::get('/dashboard/top-debtors', [DashboardController::class, 'topDebtors']);
     Route::get('/dashboard/chart', [DashboardController::class, 'chart']);
@@ -53,7 +53,8 @@ Route::put('/planes/{id}', [AdminPlanController::class, 'update']);
 Route::put('/planes/{id}/status', [AdminPlanController::class, 'setStatus']);
 
 // Facturas Admin
-    Route::apiResource('invoices', AdminInvoiceController::class);
+    Route::post('/invoices/generate-auto', [AdminInvoiceController::class, 'generateAuto']);
+    Route::apiResource('/invoices', AdminInvoiceController::class);
 
     // Import Routes
     Route::get('/import/template/{table}', [App\Http\Controllers\Admin\ImportController::class, 'downloadTemplate']);

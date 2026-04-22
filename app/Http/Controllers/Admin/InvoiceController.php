@@ -8,9 +8,31 @@ use App\Http\Requests\StoreInvoiceRequest;
 use App\Http\Requests\UpdateInvoiceRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Services\AutoBillingService;
 
 class InvoiceController extends Controller
 {
+    /**
+     * Generar facturas automáticas (mensuales)
+     * Utiliza el servicio AutoBillingService para revisar los planes de clientes
+     * activos y generar las facturas que correspondan según su ciclo de facturación.
+     * Se usa en el dashboard o panel de facturas para forzar la generación manual 
+     * de lo que normalmente correría por cron.
+     */
+    public function generateAuto(AutoBillingService $billingService)
+    {
+        try {
+            $invoices = $billingService->generateMonthlyInvoices();
+            return response()->json([
+                'message' => 'Facturas generadas exitosamente',
+                'count' => count($invoices),
+                'invoices' => $invoices
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Error al generar facturas: ' . $e->getMessage()], 500);
+        }
+    }
+
     /**
      * Listar facturas con filtros y paginación
      */
