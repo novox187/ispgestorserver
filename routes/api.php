@@ -17,6 +17,7 @@ use App\Http\Controllers\Admin\PlanController as AdminPlanController;
 use App\Http\Controllers\Admin\EmployeeController as AdminEmployeeController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\InvoiceController as AdminInvoiceController;
+use App\Http\Controllers\Admin\TransactionController as AdminTransactionController;
 
 Route::get('/user', [AdminEmployeeController::class, 'profile'])->middleware('auth:sanctum');
 
@@ -60,8 +61,11 @@ Route::put('/planes/{id}/status', [AdminPlanController::class, 'setStatus']);
     Route::get('/import/template/{table}', [App\Http\Controllers\Admin\ImportController::class, 'downloadTemplate']);
     Route::post('/import/validate', [App\Http\Controllers\Admin\ImportController::class, 'validateImport']);
     Route::post('/import/process', [App\Http\Controllers\Admin\ImportController::class, 'processImport']);
-    Route::get('/import/history', [App\Http\Controllers\Admin\ImportController::class, 'history']);
+    Route::post('/import/history', [App\Http\Controllers\Admin\ImportController::class, 'history']);
     Route::post('/import/rollback/{id}', [App\Http\Controllers\Admin\ImportController::class, 'rollback']);
+    
+    // Transacciones/Billetera Admin
+    Route::post('/clientes/{id}/add-funds', [AdminTransactionController::class, 'addFunds']);
 });
 
 
