@@ -137,6 +137,7 @@ class ClientController extends Controller
                       ->orderByDesc('start_date');
                 },
                 'clientPlans.plan',
+                'wallet:id,client_id,balance',
                 // 'servicios', // Relación deshabilitada: modelo no disponible
                 'soportes',
                 'invoices' => function ($q) {
@@ -144,6 +145,8 @@ class ClientController extends Controller
                 }
             ])
             ->findOrFail($id);
+
+        $client->wallet_balance = $client->balance;
 
         return response()->json($client);
     }
