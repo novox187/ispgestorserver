@@ -32,8 +32,23 @@ class DashboardController extends Controller
             'cpu_load' => '0%',
             'uptime' => 'Offline',
             'active_clients' => 0,
-            'total_clients' => 150
+            'total_clients' => 150,
+            'error' => null
         ];
+
+        if (!$mikroTikService->getClient()) {
+            $mikrotikData['error'] = [
+                'message' => 'Cliente MikroTik no inicializado',
+                'detail' => config('app.debug') ? 'El servicio no tiene un cliente RouterOS configurado/inyectado.' : null,
+            ];
+
+            return response()->json([
+                'active_users' => $activeUsers,
+                'users_with_debt' => $usersWithDebt,
+                'inactive_users' => $inactiveUsers,
+                'mikrotik' => $mikrotikData
+            ]);
+        }
 
         try {
             $systemInfo = $mikroTikService->getSystemInfo();
@@ -48,9 +63,24 @@ class DashboardController extends Controller
                 $mikrotikData['active_clients'] = is_array($wirelessClients) ? count($wirelessClients) : 0;
                 
                 $mikrotikData['total_clients'] = $mikroTikService->countActiveQueues();
+            } else {
+                $mikrotikData['error'] = [
+                    'message' => 'Sin respuesta de MikroTik',
+                    'detail' => config('app.debug') ? 'getSystemInfo devolvió una respuesta vacía o inesperada.' : null,
+                ];
             }
-        } catch (\Exception $e) {
-            Log::error('Dashboard FullStats MikroTik Error: ' . $e->getMessage());
+        } catch (\Throwable $e) {
+            $mikrotikData['error'] = [
+                'message' => 'No se pudo conectar a MikroTik',
+                'detail' => config('app.debug') ? $e->getMessage() : null,
+                'exception' => config('app.debug') ? get_class($e) : null,
+                'code' => config('app.debug') ? $e->getCode() : null,
+            ];
+
+            Log::error('Dashboard FullStats MikroTik Error', [
+                'message' => $e->getMessage(),
+                'exception' => $e,
+            ]);
         }
 
         return response()->json([
