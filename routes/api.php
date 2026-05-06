@@ -18,6 +18,8 @@ use App\Http\Controllers\Admin\EmployeeController as AdminEmployeeController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\InvoiceController as AdminInvoiceController;
 use App\Http\Controllers\Admin\TransactionController as AdminTransactionController;
+use App\Http\Controllers\Admin\InternetServiceProviderController;
+use App\Http\Controllers\Admin\IspConnectionController;
 
 Route::get('/user', [AdminEmployeeController::class, 'profile'])->middleware('auth:sanctum');
 
@@ -52,6 +54,22 @@ Route::get('/plans', [AdminPlanController::class, 'index']); // Nueva ruta para 
 Route::post('/planes', [AdminPlanController::class, 'store']);
 Route::put('/planes/{id}', [AdminPlanController::class, 'update']);
 Route::put('/planes/{id}/status', [AdminPlanController::class, 'setStatus']);
+
+// Proveedores de Internet (ISPs)
+Route::get('/isps', [InternetServiceProviderController::class, 'index']);
+Route::get('/isps/{id}', [InternetServiceProviderController::class, 'show']);
+Route::post('/isps', [InternetServiceProviderController::class, 'store'])->middleware('super_admin');
+Route::put('/isps/{id}', [InternetServiceProviderController::class, 'update'])->middleware('super_admin');
+Route::delete('/isps/{id}', [InternetServiceProviderController::class, 'destroy'])->middleware('super_admin');
+
+// Conexiones/Enlaces de ISPs
+Route::get('/isp-connections', [IspConnectionController::class, 'index']);
+Route::get('/isp-connections/{id}', [IspConnectionController::class, 'show']);
+Route::post('/isp-connections', [IspConnectionController::class, 'store'])->middleware('super_admin');
+Route::put('/isp-connections/{id}', [IspConnectionController::class, 'update'])->middleware('super_admin');
+Route::delete('/isp-connections/{id}', [IspConnectionController::class, 'destroy'])->middleware('super_admin');
+Route::get('/isps/{ispId}/connections', [IspConnectionController::class, 'indexByIsp']);
+Route::post('/isps/{ispId}/connections', [IspConnectionController::class, 'storeForIsp'])->middleware('super_admin');
 
 // Facturas Admin
     Route::post('/invoices/generate-auto', [AdminInvoiceController::class, 'generateAuto']);
