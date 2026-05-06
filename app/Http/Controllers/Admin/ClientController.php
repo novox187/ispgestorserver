@@ -163,6 +163,7 @@ class ClientController extends Controller
             'email' => 'required|email|max:255',
             'ip' => 'nullable|ip',
             'plan_id' => 'nullable|integer|exists:plans,id',
+            'mikrotik_force_replace' => 'sometimes|boolean',
             'reason' => 'required|string|min:5',
         ]);
 
@@ -274,7 +275,10 @@ class ClientController extends Controller
                     $newClientPlan->plan,
                     $previousQueueName,
                     $previousIp,
-                    $previousPlan
+                    $previousPlan,
+                    $oldValues['full_name'] ?? null,
+                    $oldValues['document_id'] ?? null,
+                    (bool) ($request->input('mikrotik_force_replace', false))
                 );
             }
 

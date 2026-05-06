@@ -182,3 +182,115 @@ it('renombra y actualiza la cola del cliente al editar nombre/documento', functi
     expect($queues)->not->toHaveKey('CLIENTE_1_111');
 });
 
+it('evita crear cola nueva si la existente se puede resolver por identidad previa aunque mikrotik_queue_id sea null', function () {
+    $routerClient = Mockery::mock(RouterClient::class);
+    $mikrotik = new FakeMikroTikService($routerClient);
+    $service = new MikroTikQueueSyncService($mikrotik);
+
+    $plan = Plan::factory()->create([
+        'name' => 'Plan Prev',
+        'priority' => 8,
+        'upload_speed' => 10,
+        'download_speed' => 20,
+    ]);
+
+    $client = Client::factory()->create([
+        'full_name' => 'Nombre Viejo',
+        'document_id' => '111',
+        'ip' => '192.168.20.12',
+    ]);
+
+    $clientPlan = ClientPlan::factory()->create([
+        'client_id' => $client->id,
+        'plan_id' => $plan->id,
+        'status' => 'active',
+        'ip_address' => $client->ip,
+        'mikrotik_queue_id' => null,
+    ]);
+
+    $oldName = 'nombre_viejo_111';
+    $oldQueue = new Query('/queue/simple/add');
+    $oldQueue->equal('name', $oldName);
+    $oldQueue->equal('target', $client->ip);
+    $oldQueue->equal('parent', $service->normalizeName($plan->name));
+    $mikrotik->runQuery($oldQueue);
+
+    $client->update([
+        'full_name' => 'Nombre Nuevo',
+        'document_id' => '222',
+    ]);
+
+    $service->syncClientQueueForPlan(
+        $client,
+        $clientPlan->refresh(),
+        $plan,
+        null,
+        $client->ip,
+        $plan,
+        'Nombre Viejo',
+        '111',
+        false
+    );
+
+    $queues = $mikrotik->getQueuesByName();
+    expect($queues)->toHaveKey('nombre_nuevo_222');
+    expect($queues)->not->toHaveKey($oldName);
+});
+
+it('requiere confirmación para reemplazar cuando existen cola vieja y nueva', function () {
+    $routerClient = Mockery::mock(RouterClient::class);
+    $mikrotik = new FakeMikroTikService($routerClient);
+    $service = new MikroTikQueueSyncService($mikrotik);
+
+    $plan = Plan::factory()->create([
+        'name' => 'Plan Dup',
+        'priority' => 8,
+        'upload_speed' => 10,
+        'download_speed' => 20,
+    ]);
+
+    $client = Client::factory()->create([
+        'full_name' => 'Nombre A',
+        'document_id' => '111',
+        'ip' => '192.168.20.13',
+    ]);
+
+    $clientPlan = ClientPlan::factory()->create([
+        'client_id' => $client->id,
+        'plan_id' => $plan->id,
+        'status' => 'active',
+        'ip_address' => $client->ip,
+        'mikrotik_queue_id' => null,
+    ]);
+
+    $oldQueue = new Query('/queue/simple/add');
+    $oldQueue->equal('name', 'nombre_a_111');
+    $oldQueue->equal('target', $client->ip);
+    $oldQueue->equal('parent', $service->normalizeName($plan->name));
+    $mikrotik->runQuery($oldQueue);
+
+    $newQueue = new Query('/queue/simple/add');
+    $newQueue->equal('name', 'nombre_b_222');
+    $newQueue->equal('target', $client->ip);
+    $newQueue->equal('parent', $service->normalizeName($plan->name));
+    $mikrotik->runQuery($newQueue);
+
+    $client->update([
+        'full_name' => 'Nombre B',
+        'document_id' => '222',
+    ]);
+
+    expect(function () use ($service, $client, $clientPlan, $plan) {
+        $service->syncClientQueueForPlan(
+            $client,
+            $clientPlan->refresh(),
+            $plan,
+            null,
+            $client->ip,
+            $plan,
+            'Nombre A',
+            '111',
+            false
+        );
+    })->toThrow(RuntimeException::class);
+});

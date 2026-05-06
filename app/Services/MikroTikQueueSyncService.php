@@ -645,7 +645,10 @@ class MikroTikQueueSyncService
         Plan $plan,
         ?string $previousQueueName = null,
         ?string $previousIp = null,
-        ?Plan $previousPlan = null
+        ?Plan $previousPlan = null,
+        ?string $previousFullName = null,
+        ?string $previousDocumentId = null,
+        bool $forceReplace = false
     ): array {
         if (!$this->mikrotik->getClient()) {
             throw new \RuntimeException('MikroTik no conectado: verifica MIKROTIK_HOST/USER/PASS y permisos');
@@ -659,48 +662,85 @@ class MikroTikQueueSyncService
         }
 
         $expectedQueueName = $this->buildClientQueueName($client);
-        $currentQueueName = $previousQueueName ?: ($clientPlan->mikrotik_queue_id ?: $expectedQueueName);
+
+        $candidateOldNames = [];
+        if ($previousQueueName) {
+            $candidateOldNames[] = $previousQueueName;
+        }
+        if ($clientPlan->mikrotik_queue_id) {
+            $candidateOldNames[] = $clientPlan->mikrotik_queue_id;
+        }
+        if ($previousFullName !== null || $previousDocumentId !== null) {
+            $tmp = new Client([
+                'full_name' => $previousFullName ?? $client->full_name,
+                'document_id' => $previousDocumentId ?? $client->document_id,
+            ]);
+            $candidateOldNames[] = $this->buildClientQueueName($tmp);
+        }
+        if ($previousDocumentId) {
+            $candidateOldNames[] = $this->normalizeName('CLIENTE_' . $client->id . '_' . $previousDocumentId);
+        }
+
+        $candidateOldNames = array_values(array_unique(array_filter(array_map('trim', $candidateOldNames))));
+        $candidateOldNames = array_values(array_filter($candidateOldNames, fn ($n) => $n !== '' && $n !== $expectedQueueName));
+
+        $existingNew = $this->findQueueByName($expectedQueueName);
+
+        $resolvedOldName = null;
+        $existingOld = null;
+        foreach ($candidateOldNames as $name) {
+            $q = $this->findQueueByName($name);
+            if ($q) {
+                $resolvedOldName = $name;
+                $existingOld = $q;
+                break;
+            }
+        }
 
         $renameAction = null;
-        if ($currentQueueName !== $expectedQueueName) {
-            $existingOld = $this->findQueueByName($currentQueueName);
-            $existingNew = $this->findQueueByName($expectedQueueName);
+        if ($existingOld && $resolvedOldName && $resolvedOldName !== $expectedQueueName) {
+            if ($existingNew && !empty($existingOld['.id'])) {
+                if (!$forceReplace) {
+                    throw new \RuntimeException('Ya existe una cola con el nombre nuevo. Reintenta con mikrotik_force_replace=true para reemplazar la cola antigua.');
+                }
 
-            if ($existingOld && !$existingNew && !empty($existingOld['.id'])) {
+                $wifi = $this->mikrotik->getWifiDeviceByIp($ip);
+                if (!empty($wifi)) {
+                    Log::warning('Client appears connected while replacing queue name', [
+                        'client_id' => $client->id,
+                        'client_plan_id' => $clientPlan->id,
+                        'ip' => $ip,
+                        'devices' => $wifi,
+                    ]);
+                }
+
+                $this->deleteQueueByName($resolvedOldName);
+                $renameAction = 'deleted_duplicate_old';
+            } elseif (!$existingNew && !empty($existingOld['.id'])) {
                 $set = new Query('/queue/simple/set');
                 $set->equal('.id', $existingOld['.id']);
                 $set->equal('name', $expectedQueueName);
                 $routerRename = $this->mikrotik->runQuery($set);
-                $this->auditMikroTik('UPDATE', $currentQueueName, $existingOld, ['name' => $expectedQueueName]);
+                $this->auditMikroTik('UPDATE', $resolvedOldName, $existingOld, ['name' => $expectedQueueName]);
 
                 Log::info('Client queue renamed', [
                     'client_id' => $client->id,
                     'client_plan_id' => $clientPlan->id,
-                    'old_queue_name' => $currentQueueName,
+                    'old_queue_name' => $resolvedOldName,
                     'new_queue_name' => $expectedQueueName,
                     'router_result' => $routerRename,
                 ]);
 
                 $renameAction = 'renamed';
-            } elseif ($existingNew && $existingOld && !empty($existingOld['.id'])) {
-                $this->deleteQueueByName($currentQueueName);
-                $renameAction = 'deleted_duplicate_old';
-
-                Log::warning('Client queue duplicate detected; removed old name', [
-                    'client_id' => $client->id,
-                    'client_plan_id' => $clientPlan->id,
-                    'old_queue_name' => $currentQueueName,
-                    'new_queue_name' => $expectedQueueName,
-                ]);
-            } else {
-                $renameAction = 'old_missing';
-                Log::warning('Client queue rename skipped (old not found)', [
-                    'client_id' => $client->id,
-                    'client_plan_id' => $clientPlan->id,
-                    'old_queue_name' => $currentQueueName,
-                    'new_queue_name' => $expectedQueueName,
-                ]);
             }
+        } elseif (!$existingNew) {
+            $renameAction = 'old_missing';
+            Log::warning('Client queue not found by previous identifiers; will create/update expected name', [
+                'client_id' => $client->id,
+                'client_plan_id' => $clientPlan->id,
+                'expected_queue_name' => $expectedQueueName,
+                'candidates' => $candidateOldNames,
+            ]);
         }
 
         $planEnsured = $this->ensurePlanQueue($plan);
