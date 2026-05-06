@@ -19,6 +19,8 @@ public function up()
         $table->integer('download_speed');
         $table->integer('upload_speed');
         $table->boolean('symmetric')->default(false);
+        $table->string('ratio')->default('1:1')
+                ->comment('Relación de ancho de banda (ej: 1:1 dedicado, 10:1 residencial)');
         $table->decimal('monthly_price', 8, 2);
         $table->decimal('setup_price', 8, 2)->default(0);
         $table->string('billing_cycle')->default('monthly');
