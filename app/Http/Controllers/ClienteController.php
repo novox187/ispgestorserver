@@ -8,8 +8,10 @@ use App\Models\ClientPlan;
 use App\Models\Plan;
 use App\Services\MikroTikQueueSyncService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Str;
 
@@ -42,7 +44,11 @@ class ClienteController extends Controller
                 'gps_coordinates' => ['nullable', 'string', 'max:50'],
                 'contract_date' => ['required', 'date'],
                 'service_status' => ['nullable', 'in:ACTIVE,LIMITED,SUSPENDED,CANCELLED,INACTIVE,ACTIVO,LIMITADO,SUSPENDIDO,INACTIVO'],
-                'ip' => ['nullable', 'ip'],
+                'ip' => [
+                    'nullable',
+                    Rule::requiredIf(fn () => $request->filled('plan_id') || $request->filled('plan')),
+                    'ip',
+                ],
                 'observations' => ['nullable', 'string'],
                 'plan_id' => ['nullable', 'integer', 'exists:plans,id'],
                 'plan' => ['nullable', 'string'],
@@ -64,81 +70,63 @@ class ClienteController extends Controller
                 $data['service_status'] = $map[$upper] ?? 'ACTIVE';
             }
 
-            $client = Client::create([
-                'full_name' => $data['full_name'],
-                'document_id' => $data['document_id'],
-                'contact_phone' => $data['contact_phone'],
-                'email' => $data['email'],
-                'password' => Hash::make($data['password']),
-                'installation_address' => $data['installation_address'],
-                'gps_coordinates' => $data['gps_coordinates'] ?? null,
-                'contract_date' => $data['contract_date'],
-                'service_status' => $data['service_status'] ?? 'ACTIVE',
-                'ip' => $data['ip'] ?? '0.0.0.0',
-                'observations' => $data['observations'] ?? null,
-            ]);
+            return DB::transaction(function () use ($data) {
+                $client = Client::create([
+                    'full_name' => $data['full_name'],
+                    'document_id' => $data['document_id'],
+                    'contact_phone' => $data['contact_phone'],
+                    'email' => $data['email'],
+                    'password' => Hash::make($data['password']),
+                    'installation_address' => $data['installation_address'],
+                    'gps_coordinates' => $data['gps_coordinates'] ?? null,
+                    'contract_date' => $data['contract_date'],
+                    'service_status' => $data['service_status'] ?? 'ACTIVE',
+                    'ip' => $data['ip'] ?? '0.0.0.0',
+                    'observations' => $data['observations'] ?? null,
+                ]);
 
-            $wallet = Wallet::create([
-                'client_id' => $client->id,
-                'balance' => 0,
-                'currency' => 'USD',
-                'status' => 'active',
-            ]);
+                $wallet = Wallet::create([
+                    'client_id' => $client->id,
+                    'balance' => 0,
+                    'currency' => 'USD',
+                    'status' => 'active',
+                ]);
 
-            $clientPlan = null;
-            $plan = null;
-            if (!empty($data['plan_id']) || !empty($data['plan'])) {
-                if (!empty($data['plan_id'])) {
-                    $plan = Plan::find($data['plan_id']);
-                } else {
-                    $plan = Plan::query()
-                        ->where('name', $data['plan'])
-                        ->orWhere('slug', $data['plan'])
-                        ->first();
-                }
-                if ($plan) {
-                    $clientPlan = ClientPlan::create([
-                        'client_id' => $client->id,
-                        'plan_id' => $plan->id,
-                        'status' => 'active',
-                        'start_date' => now()->toDateString(),
-                        'next_billing_date' => now()->addMonth()->toDateString(),
-                        'current_price' => $plan->monthly_price ?? 0,
-                        'billing_cycle' => $plan->billing_cycle ?? 'monthly',
-                        'ip_address' => $data['ip'] ?? null,
-                        'notes' => $data['observations'] ?? null,
-                    ]);
-                }
-            }
-
-            if ($plan) {
-                try {
-                    $syncResult = $this->sync->createClientAndQueue($client, $clientPlan, $plan);
-                } catch (\Throwable $e) {
-                    Log::error('Sincronización MikroTik falló durante creación de cliente', [
-                        'client_id' => $client->id,
-                        'error' => $e->getMessage(),
-                        'trace' => $e->getTraceAsString(),
-                    ]);
-                    // Rollback de datos creados si falla la creación en MikroTik
-                    if ($clientPlan) {
-                        $clientPlan->delete();
+                $clientPlan = null;
+                $plan = null;
+                if (!empty($data['plan_id']) || !empty($data['plan'])) {
+                    if (!empty($data['plan_id'])) {
+                        $plan = Plan::find($data['plan_id']);
+                    } else {
+                        $plan = Plan::query()
+                            ->where('name', $data['plan'])
+                            ->orWhere('slug', $data['plan'])
+                            ->first();
                     }
-                    $wallet->delete();
-                    $client->delete();
-                    return response()->json([
-                        'message' => 'Fallo creando queue en MikroTik. No se creó el cliente.',
-                        'error' => config('app.debug') ? $e->getMessage() : null,
-                    ], 502);
-                }
-            }
+                    if ($plan) {
+                        $clientPlan = ClientPlan::create([
+                            'client_id' => $client->id,
+                            'plan_id' => $plan->id,
+                            'status' => 'active',
+                            'start_date' => now()->toDateString(),
+                            'next_billing_date' => now()->addMonth()->toDateString(),
+                            'current_price' => $plan->monthly_price ?? 0,
+                            'billing_cycle' => $plan->billing_cycle ?? 'monthly',
+                            'ip_address' => $data['ip'] ?? null,
+                            'notes' => $data['observations'] ?? null,
+                        ]);
 
-            return response()->json([
-                'client' => $client,
-                'wallet' => $wallet,
-                'client_plan' => $clientPlan,
-                'sync' => isset($syncResult) ? $syncResult : null,
-            ], 201);
+                        $syncResult = $this->sync->createClientAndQueue($client, $clientPlan, $plan);
+                    }
+                }
+
+                return response()->json([
+                    'client' => $client,
+                    'wallet' => $wallet,
+                    'client_plan' => $clientPlan,
+                    'sync' => isset($syncResult) ? $syncResult : null,
+                ], 201);
+            });
         } catch (ValidationException $ve) {
             $errorId = (string) Str::uuid();
             $safeInput = collect($request->all())->except(['password'])->toArray();
@@ -162,10 +150,10 @@ class ClienteController extends Controller
                 'input' => $safeInput,
             ]);
             return response()->json([
-                'message' => 'Error creando cliente.',
+                'message' => 'Error creando cliente o sincronizando con MikroTik.',
                 'error_id' => $errorId,
                 'error' => config('app.debug') ? $e->getMessage() : null,
-            ], 500);
+            ], 502);
         }
     }
 

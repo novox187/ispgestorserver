@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use App\Models\Client;
 use App\Models\Plan;
 use App\Models\Audit;
+use App\Services\MikroTikQueueSyncService;
 use App\Services\MikroTikService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
@@ -154,16 +155,29 @@ class ClientController extends Controller
     /**
      * Actualizar cliente: Datos básicos, plan y registro de auditoría con motivo
      */
-    public function update(Request $request, $id)
+    public function update(Request $request, $id, MikroTikQueueSyncService $sync)
     {
         $request->validate([
             'full_name' => 'required|string|max:255',
             'document_id' => 'required|string|max:50|unique:clients,document_id,' . $id, // Ignorar ID actual
             'email' => 'required|email|max:255',
+            'ip' => 'nullable|ip',
+            'plan_id' => 'nullable|integer|exists:plans,id',
             'reason' => 'required|string|min:5',
         ]);
 
         $client = Client::findOrFail($id);
+        $previousClientPlan = $client->clientPlans()
+            ->with('plan')
+            ->where('status', 'active')
+            ->where(function ($q) {
+                $q->whereNull('end_date')->orWhere('end_date', '>=', now());
+            })
+            ->orderByDesc('start_date')
+            ->first();
+        $previousPlan = $previousClientPlan?->plan;
+        $previousQueueName = $previousClientPlan?->mikrotik_queue_id;
+        $previousIp = $previousClientPlan?->ip_address ?: $client->ip;
         
         DB::beginTransaction();
         try {
@@ -226,6 +240,18 @@ class ClientController extends Controller
                  }
             }
 
+            $newClientPlan = $client->clientPlans()
+                ->with('plan')
+                ->where('status', 'active')
+                ->where(function ($q) {
+                    $q->whereNull('end_date')->orWhere('end_date', '>=', now());
+                })
+                ->orderByDesc('start_date')
+                ->first();
+            if ($newClientPlan && $client->ip && filter_var($client->ip, FILTER_VALIDATE_IP) && $newClientPlan->ip_address !== $client->ip) {
+                $newClientPlan->update(['ip_address' => $client->ip]);
+            }
+
             // 3. Auditoría Manual con Motivo
             Audit::create([
                 'table_name' => 'clients',
@@ -241,13 +267,30 @@ class ClientController extends Controller
                 'ip_address' => $request->ip(),
             ]);
 
+            if ($newClientPlan && $newClientPlan->plan) {
+                $sync->syncClientQueueForPlan(
+                    $client,
+                    $newClientPlan,
+                    $newClientPlan->plan,
+                    $previousQueueName,
+                    $previousIp,
+                    $previousPlan
+                );
+            }
+
             DB::commit();
             return response()->json(['success' => true, 'message' => 'Cliente actualizado correctamente', 'client' => $client]);
 
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error("Error actualizando cliente ID {$id}: " . $e->getMessage());
-            return response()->json(['success' => false, 'message' => 'Error actualizando cliente: ' . $e->getMessage()], 500);
+            Log::error("Error actualizando cliente ID {$id}: " . $e->getMessage(), [
+                'client_id' => $id,
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Error actualizando cliente: ' . $e->getMessage(),
+                'sync_failed' => true,
+            ], 503);
         }
     }
 

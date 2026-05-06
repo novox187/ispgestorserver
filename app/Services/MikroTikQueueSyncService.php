@@ -51,7 +51,8 @@ class MikroTikQueueSyncService
     protected function normalizePlanQueueName(Plan $plan): string
     {
         $name = trim((string) ($plan->mikrotik_queue_name ?: $plan->name ?: $plan->slug ?: ''));
-        return $name === '' ? 'plan_' . $plan->id : $name;
+        $name = $name === '' ? 'plan_' . $plan->id : $name;
+        return $this->normalizeName($name);
     }
 
     /* Funcion funcional */
@@ -67,6 +68,38 @@ class MikroTikQueueSyncService
             return $name . '_' . $documentId;
         }
         return $name;
+    }
+
+    protected function buildClientQueueName(Client $client): string
+    {
+        $raw = $this->normalizeClientQueueName($client);
+        $sanitized = strtolower($this->normalizeName($raw));
+        $documentId = trim((string) ($client->document_id ?? ''));
+
+        if ($documentId !== '' && str_ends_with($sanitized, '_' . $documentId)) {
+            $max = 64;
+            if (strlen($sanitized) <= $max) {
+                return $sanitized;
+            }
+
+            $suffix = '_' . $documentId;
+            $allowedBaseLen = max(1, $max - strlen($suffix));
+            $base = substr($sanitized, 0, $allowedBaseLen);
+            $base = rtrim($base, '_');
+            $final = $base . $suffix;
+
+            Log::warning('Client queue name truncated to fit RouterOS limits', [
+                'client_id' => $client->id,
+                'document_id' => $documentId,
+                'original' => $sanitized,
+                'final' => $final,
+                'max_len' => $max,
+            ]);
+
+            return $final;
+        }
+
+        return $sanitized;
     }
 
     protected function normalizeSpeedValue(?string $value): string
@@ -143,13 +176,22 @@ class MikroTikQueueSyncService
         $upload = $plan->upload_limit ?: ($plan->upload_speed ? $plan->upload_speed . 'M' : '0');
         $download = $plan->download_limit ?: ($plan->download_speed ? $plan->download_speed . 'M' : '0');
         $target = count($targets) ? implode(',', $targets) : '0.0.0.0/0';
-        return [
+        $params = [
             'name' => $this->normalizePlanQueueName($plan),
             'target' => $target,
             'parent' => 'none',
+            'priority' => (string) max(1, min(8, (int) $plan->priority)),
             'max-limit' => $this->formatSpeedPairFromStrings($upload, $download),
             'limit-at' => $this->formatSpeedPairFromStrings($upload, $download),
         ];
+
+        if (!empty($plan->burst_limit)) {
+            $params['burst-limit'] = $this->normalizeBurst($plan->burst_limit, $params['max-limit']);
+            $params['burst-threshold'] = $params['max-limit'];
+            $params['burst-time'] = '8s/8s';
+        }
+
+        return $params;
     }
 
     protected function buildClientQueueParams(Client $client, Plan $plan, string $parentName, string $ip): array
@@ -161,13 +203,22 @@ class MikroTikQueueSyncService
             $this->calculatePercentSpeed($upload, 10),
             $this->calculatePercentSpeed($download, 10)
         );
-        return [
-            'name' => $this->normalizeClientQueueName($client),
+        $params = [
+            'name' => $this->buildClientQueueName($client),
             'target' => $ip,
             'parent' => $parentName,
+            'priority' => (string) max(1, min(8, (int) $plan->priority)),
             'max-limit' => $maxLimit,
             'limit-at' => $limitAt,
         ];
+
+        if (!empty($plan->burst_limit)) {
+            $params['burst-limit'] = $this->normalizeBurst($plan->burst_limit, $params['max-limit']);
+            $params['burst-threshold'] = $params['max-limit'];
+            $params['burst-time'] = '8s/8s';
+        }
+
+        return $params;
     }
 
     protected function upsertQueue(string $name, array $params): array
@@ -390,79 +441,29 @@ class MikroTikQueueSyncService
             throw new \RuntimeException('MikroTik no conectado: verifica MIKROTIK_HOST/USER/PASS y permisos');
         }
         $start = microtime(true);
-        $normalized = $this->normalizeName($plan->mikrotik_queue_name ?: $plan->slug ?: $plan->name);
-        $existing = $this->findQueueByName($normalized);
+        $targets = $this->buildPlanTargetIps($plan);
+        $params = $this->buildPlanQueueParams($plan, $targets);
+        $name = $params['name'];
 
-        if ($existing) {
-            $valid = $this->validatePlanQueue($plan, $existing);
-            Log::info('Plan queue validated', [
-                'plan_id' => $plan->id,
-                'queue_name' => $normalized,
-                'valid' => $valid,
-                'duration_ms' => (microtime(true) - $start) * 1000,
-            ]);
-            return [
-                'action' => 'validated',
-                'valid' => $valid,
-                'name' => $normalized,
-                'queue' => $existing,
-            ];
+        $result = $this->upsertQueue($name, $params);
+        $queue = $this->findQueueByName($name);
+
+        if ($plan->mikrotik_queue_name !== $name) {
+            $plan->update(['mikrotik_queue_name' => $name]);
         }
 
-        $params = [
-            'name' => $normalized,
-            'target' => '0.0.0.0/0',
-            'parent' => 'none',
-            'priority' => (string) max(1, min(8, (int) $plan->priority)),
-            'max-limit' => $this->formatSpeedPair(
-                (int) $plan->upload_speed,
-                (int) $plan->download_speed
-            ),
-            'limit-at' => $this->formatSpeedPair(
-                (int) $plan->upload_speed,
-                (int) $plan->download_speed
-            ),
-        ];
-
-        if (!empty($plan->burst_limit)) {
-            $params['burst-limit'] = $this->normalizeBurst($plan->burst_limit, $params['max-limit']);
-            $params['burst-threshold'] = $params['max-limit'];
-            $params['burst-time'] = '8s/8s';
-        }
-
-        $created = $this->withRetries(function () use ($params) {
-            return $this->createSimpleQueue($params);
-        });
-
-        $this->auditMikroTik('INSERT', $normalized, null, $params);
-
-        Log::info('Plan queue created', [
+        Log::info('Plan queue ensured', [
             'plan_id' => $plan->id,
-            'queue_name' => $normalized,
-            'params' => $params,
-            'router_result' => $created,
+            'queue_name' => $name,
+            'router_action' => $result['action'] ?? null,
             'duration_ms' => (microtime(true) - $start) * 1000,
         ]);
 
-        $plan->update(['mikrotik_queue_name' => $normalized]);
-
-        $createdQueue = $this->findQueueByName($normalized);
-        if (!$createdQueue) {
-            Log::warning('Plan queue not found after creation', [
-                'plan_id' => $plan->id,
-                'queue_name' => $normalized,
-            ]);
-            return [
-                'action' => 'failed',
-                'name' => $normalized,
-                'queue' => null,
-                'reason' => 'Queue no visible tras creación. Verifica conexión/credenciales.',
-            ];
-        }
         return [
-            'action' => 'created',
-            'name' => $normalized,
-            'queue' => $createdQueue,
+            'action' => $result['action'] ?? 'ensured',
+            'name' => $name,
+            'queue' => $queue,
+            'result' => $result,
         ];
     }
 
@@ -493,55 +494,26 @@ class MikroTikQueueSyncService
             throw new \RuntimeException('MikroTik no conectado: verifica MIKROTIK_HOST/USER/PASS y permisos');
         }
         $start = microtime(true);
-        $queueName = $this->normalizeName('CLIENTE_' . $client->id . '_' . $client->document_id);
+        $queueName = $this->buildClientQueueName($client);
         try {
         return DB::transaction(function () use ($client, $clientPlan, $plan, $start, $queueName) {
             $planEnsured = $this->ensurePlanQueue($plan);
 
-            if ($this->findQueueByName($queueName)) {
-                Log::warning('Client queue already exists', [
-                    'client_id' => $client->id,
-                    'queue_name' => $queueName,
-                ]);
-                return [
-                    'success' => true,
-                    'message' => 'Queue ya existe',
-                    'queue_name' => $queueName,
-                    'plan_queue' => $planEnsured,
-                ];
-            }
-
-            $params = [
-                'name' => $queueName,
-                'target' => $clientPlan?->ip_address ?: $client->ip ?: '0.0.0.0',
-                'parent' => $planEnsured['name'],
-                'priority' => (string) max(1, min(8, (int) $plan->priority)),
-                'max-limit' => $this->formatSpeedPair(
-                    (int) ($plan->upload_speed),
-                    (int) ($plan->download_speed)
-                ),
-                'limit-at' => $this->formatSpeedPair(
-                    (int) ($plan->upload_speed),
-                    (int) ($plan->download_speed)
-                ),
-            ];
-
-            if (!empty($plan->burst_limit)) {
-                $params['burst-limit'] = $this->normalizeBurst($plan->burst_limit, $params['max-limit']);
-                $params['burst-threshold'] = $params['max-limit'];
-                $params['burst-time'] = '8s/8s';
+            $ip = $clientPlan?->ip_address ?: $client->ip;
+            if (!$ip || !filter_var($ip, FILTER_VALIDATE_IP)) {
+                throw new \InvalidArgumentException('IP inválida o vacía para crear cola de cliente en MikroTik');
             }
 
             $routerResult = null;
             try {
-                $routerResult = $this->withRetries(function () use ($params) {
-                    return $this->createSimpleQueue($params);
-                });
+                $params = $this->buildClientQueueParams($client, $plan, $planEnsured['name'], $ip);
+                $routerResult = $this->upsertQueue($queueName, $params);
             } catch (Throwable $e) {
                 Log::error('Crear queue cliente fallo', [
                     'client_id' => $client->id,
+                    'client_plan_id' => $clientPlan?->id,
+                    'plan_id' => $plan->id,
                     'queue_name' => $queueName,
-                    'params' => $params,
                     'error' => $e->getMessage(),
                     'trace' => $e->getTraceAsString(),
                 ]);
@@ -554,17 +526,13 @@ class MikroTikQueueSyncService
                 ]);
             }
 
-            // Agregar IP del cliente al target del plan
-            $clientIp = $clientPlan?->ip_address ?: $client->ip;
-            if ($clientIp && filter_var($clientIp, FILTER_VALIDATE_IP)) {
-                $this->appendIpToPlanTarget($planEnsured['name'], $clientIp);
-            }
-
             Log::info('Cliente y queue creados', [
                 'client_id' => $client->id,
+                'client_plan_id' => $clientPlan?->id,
+                'plan_id' => $plan->id,
                 'queue_name' => $queueName,
                 'plan_queue' => $planEnsured['name'],
-                'router_result' => $routerResult,
+                'router_action' => $routerResult['action'] ?? null,
                 'duration_ms' => (microtime(true) - $start) * 1000,
             ]);
 
@@ -573,6 +541,7 @@ class MikroTikQueueSyncService
                 'message' => 'Cliente sincronizado con MikroTik',
                 'queue_name' => $queueName,
                 'plan_queue_name' => $planEnsured['name'],
+                'router_action' => $routerResult['action'] ?? null,
             ];
         });
         } catch (Throwable $e) {
@@ -629,6 +598,144 @@ class MikroTikQueueSyncService
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    protected function removeIpFromPlanTarget(string $planQueueName, string $ip): void
+    {
+        try {
+            $queue = $this->findQueueByName($planQueueName);
+            if (!$queue || empty($queue['.id'])) {
+                return;
+            }
+            $current = trim($queue['target'] ?? '');
+            $targets = array_filter(array_map('trim', $current !== '' ? explode(',', $current) : []));
+            $targets = array_values(array_filter($targets, fn ($t) => $t !== $ip));
+            $newTarget = implode(',', $targets);
+            if ($newTarget === '') {
+                $newTarget = '0.0.0.0/0';
+            }
+            if ($newTarget === $current) {
+                return;
+            }
+            $set = new Query('/queue/simple/set');
+            $set->equal('.id', $queue['.id']);
+            $set->equal('target', $newTarget);
+            $this->mikrotik->runQuery($set);
+
+            $this->auditMikroTik('UPDATE', $planQueueName, ['target' => $current], ['target' => $newTarget]);
+
+            Log::info('Plan queue target updated', [
+                'queue_name' => $planQueueName,
+                'old_target' => $current,
+                'new_target' => $newTarget,
+                'removed_ip' => $ip,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Remove IP from plan target failed', [
+                'queue_name' => $planQueueName,
+                'ip' => $ip,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    public function syncClientQueueForPlan(
+        Client $client,
+        ClientPlan $clientPlan,
+        Plan $plan,
+        ?string $previousQueueName = null,
+        ?string $previousIp = null,
+        ?Plan $previousPlan = null
+    ): array {
+        if (!$this->mikrotik->getClient()) {
+            throw new \RuntimeException('MikroTik no conectado: verifica MIKROTIK_HOST/USER/PASS y permisos');
+        }
+
+        $start = microtime(true);
+
+        $ip = $clientPlan->ip_address ?: $client->ip;
+        if (!$ip || !filter_var($ip, FILTER_VALIDATE_IP)) {
+            throw new \InvalidArgumentException('IP inválida o vacía para sincronizar cliente en MikroTik');
+        }
+
+        $expectedQueueName = $this->buildClientQueueName($client);
+        $currentQueueName = $previousQueueName ?: ($clientPlan->mikrotik_queue_id ?: $expectedQueueName);
+
+        $renameAction = null;
+        if ($currentQueueName !== $expectedQueueName) {
+            $existingOld = $this->findQueueByName($currentQueueName);
+            $existingNew = $this->findQueueByName($expectedQueueName);
+
+            if ($existingOld && !$existingNew && !empty($existingOld['.id'])) {
+                $set = new Query('/queue/simple/set');
+                $set->equal('.id', $existingOld['.id']);
+                $set->equal('name', $expectedQueueName);
+                $routerRename = $this->mikrotik->runQuery($set);
+                $this->auditMikroTik('UPDATE', $currentQueueName, $existingOld, ['name' => $expectedQueueName]);
+
+                Log::info('Client queue renamed', [
+                    'client_id' => $client->id,
+                    'client_plan_id' => $clientPlan->id,
+                    'old_queue_name' => $currentQueueName,
+                    'new_queue_name' => $expectedQueueName,
+                    'router_result' => $routerRename,
+                ]);
+
+                $renameAction = 'renamed';
+            } elseif ($existingNew && $existingOld && !empty($existingOld['.id'])) {
+                $this->deleteQueueByName($currentQueueName);
+                $renameAction = 'deleted_duplicate_old';
+
+                Log::warning('Client queue duplicate detected; removed old name', [
+                    'client_id' => $client->id,
+                    'client_plan_id' => $clientPlan->id,
+                    'old_queue_name' => $currentQueueName,
+                    'new_queue_name' => $expectedQueueName,
+                ]);
+            } else {
+                $renameAction = 'old_missing';
+                Log::warning('Client queue rename skipped (old not found)', [
+                    'client_id' => $client->id,
+                    'client_plan_id' => $clientPlan->id,
+                    'old_queue_name' => $currentQueueName,
+                    'new_queue_name' => $expectedQueueName,
+                ]);
+            }
+        }
+
+        $planEnsured = $this->ensurePlanQueue($plan);
+        $params = $this->buildClientQueueParams($client, $plan, $planEnsured['name'], $ip);
+        $result = $this->upsertQueue($expectedQueueName, $params);
+
+        if ($clientPlan->mikrotik_queue_id !== $expectedQueueName) {
+            $clientPlan->update(['mikrotik_queue_id' => $expectedQueueName]);
+        }
+
+        if ($previousPlan && $previousPlan->id !== $plan->id) {
+            $oldPlanQueueName = $this->normalizePlanQueueName($previousPlan);
+            $oldIp = $previousIp && filter_var($previousIp, FILTER_VALIDATE_IP) ? $previousIp : null;
+            if ($oldIp) {
+                $this->removeIpFromPlanTarget($oldPlanQueueName, $oldIp);
+            }
+        }
+
+        Log::info('Client queue synchronized', [
+            'client_id' => $client->id,
+            'client_plan_id' => $clientPlan->id,
+            'plan_id' => $plan->id,
+            'queue_name' => $expectedQueueName,
+            'ip' => $ip,
+            'rename_action' => $renameAction,
+            'router_action' => $result['action'] ?? null,
+            'duration_ms' => (microtime(true) - $start) * 1000,
+        ]);
+
+        return [
+            'queue_name' => $expectedQueueName,
+            'ip' => $ip,
+            'rename_action' => $renameAction,
+            'router' => $result,
+        ];
     }
 
     public function withRetries(callable $fn)
