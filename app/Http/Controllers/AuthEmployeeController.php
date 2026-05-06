@@ -3,8 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\Employee;
+use App\Models\Permission;
+use App\Models\Role;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
@@ -16,6 +19,10 @@ class AuthEmployeeController extends Controller
             'email' => ['required', 'email'],
             'password' => ['required', 'string'],
         ]);
+
+        if (Employee::query()->count() === 0) {
+            $this->bootstrapFirstSuperAdmin($request, $credentials);
+        }
 
         $employee = Employee::where('email', $credentials['email'])->first();
         if (!$employee) {
@@ -89,5 +96,40 @@ class AuthEmployeeController extends Controller
             'ip' => $request->ip(),
         ]);
         return response()->json(['message' => 'Sesión cerrada correctamente']);
+    }
+
+    private function bootstrapFirstSuperAdmin(Request $request, array $credentials): ?Employee
+    {
+        return DB::transaction(function () use ($request, $credentials) {
+            if (Employee::query()->lockForUpdate()->count() !== 0) {
+                return null;
+            }
+
+            $superAdminRole = Role::firstOrCreate(
+                ['slug' => 'super_admin'],
+                ['nombre' => 'Super Admin', 'slug' => 'super_admin', 'descripcion' => 'Acceso total al sistema']
+            );
+
+            $permissionIds = Permission::query()->pluck('id')->all();
+            if (!empty($permissionIds)) {
+                $superAdminRole->permissions()->syncWithoutDetaching($permissionIds);
+            }
+
+            $employee = Employee::create([
+                'nombre' => $request->input('nombre') ?: 'Super Admin',
+                'email' => $credentials['email'],
+                'password' => $credentials['password'],
+                'telefono' => $request->input('telefono'),
+                'role_id' => $superAdminRole->id,
+            ]);
+
+            Log::notice('Bootstrap: primer empleado creado como super_admin', [
+                'employee_id' => $employee->id,
+                'email' => $employee->email,
+                'ip' => $request->ip(),
+            ]);
+
+            return $employee;
+        });
     }
 }
