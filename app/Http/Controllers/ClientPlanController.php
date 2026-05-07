@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Plan;
 use App\Models\ClientPlan;
+use App\Services\IspCapacityService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -14,7 +15,7 @@ class ClientPlanController extends Controller
     /**
      * Obtener todos los planes activos con sus características
      */
-    public function getAllPlans(): JsonResponse
+    public function getAllPlans(IspCapacityService $capacity): JsonResponse
     {
         try {
             $plans = Plan::with(['features' => function($query) {
@@ -25,12 +26,18 @@ class ClientPlanController extends Controller
             ->orderBy('monthly_price')
             ->get();
 
+            $snapshot = $capacity->getCapacitySnapshot();
+            $counts = $capacity->getPlanActiveClientCounts();
+            $deltas = $capacity->getNextClientDeltasByPlanId($plans->pluck('id')->all(), $counts);
+            $remaining = (float) ($snapshot['remaining_down_mbps'] ?? 0);
+
             $formattedPlans = $plans->map(function($plan) {
                 return [
                     'id' => $plan->id,
                     'name' => $plan->name,
                     'download_speed' => $plan->download_speed,
                     'upload_speed' => $plan->upload_speed,
+                    'ratio' => (string) ($plan->ratio ?? '1:1'),
                     'monthly_price' => (float) $plan->monthly_price,
                     'billing_cycle' => $plan->billing_cycle,
                     'category' => $plan->category,
@@ -47,9 +54,18 @@ class ClientPlanController extends Controller
                 ];
             });
 
+            $formattedPlans = $formattedPlans->map(function (array $p) use ($deltas, $remaining) {
+                $pid = (int) ($p['id'] ?? 0);
+                $delta = (float) ($deltas[$pid]['delta_down_mbps'] ?? 0);
+                $p['next_client_required_down_mbps'] = $delta;
+                $p['can_add_next_client'] = $delta <= $remaining;
+                return $p;
+            });
+
             return response()->json([
                 'success' => true,
                 'data' => $formattedPlans,
+                'capacity' => $snapshot,
                 'message' => 'Planes obtenidos exitosamente'
             ]);
 

@@ -12,6 +12,13 @@ class MikroTikServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(Client::class, function ($app) {
+            if (!config('mikrotik.enabled')) {
+                return null;
+            }
+            $host = (string) config('mikrotik.host');
+            if (trim($host) === '') {
+                return null;
+            }
             try {
                 $config = new Config([
                     'host' => config('mikrotik.host'),

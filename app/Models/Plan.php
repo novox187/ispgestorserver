@@ -18,6 +18,7 @@ class Plan extends Model
         'download_speed',
         'upload_speed',
         'symmetric',
+        'ratio',
         'monthly_price',
         'setup_price',
         'billing_cycle',

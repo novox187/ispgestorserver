@@ -20,7 +20,7 @@ public function up()
         $table->integer('upload_speed');
         $table->boolean('symmetric')->default(false);
         $table->string('ratio')->default('1:1')
-                ->comment('Relación de ancho de banda (ej: 1:1 dedicado, 10:1 residencial)');
+                ->comment('Relación de ancho de banda (ej: 1:4 = La cantidad de ancho de banda asignnada al plan se divide entre 4 clientes)');
         $table->decimal('monthly_price', 8, 2);
         $table->decimal('setup_price', 8, 2)->default(0);
         $table->string('billing_cycle')->default('monthly');

@@ -8,6 +8,7 @@ use App\Models\ClientPlan;
 use App\Models\Plan;
 use App\Models\Wallet;
 use App\Services\MikroTikQueueSyncService;
+use App\Services\IspCapacityService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
@@ -17,10 +18,12 @@ use Illuminate\Http\UploadedFile;
 class ImportService
 {
     protected $mikrotikSync;
+    protected $capacity;
 
-    public function __construct(MikroTikQueueSyncService $mikrotikSync)
+    public function __construct(MikroTikQueueSyncService $mikrotikSync, IspCapacityService $capacity)
     {
         $this->mikrotikSync = $mikrotikSync;
+        $this->capacity = $capacity;
     }
     public function generateTemplate(string $tableName)
     {
@@ -204,6 +207,24 @@ class ImportService
             $plan = Plan::find($planId);
 
             if ($client && $plan) {
+                $reuse = $this->capacity->getPlanReuseRatio($plan);
+                $snapshot = $this->capacity->getCapacitySnapshot();
+                $remaining = (float) ($snapshot['remaining_down_mbps'] ?? 0);
+                $countBefore = (int) ClientPlan::query()
+                    ->where('plan_id', $plan->id)
+                    ->where('status', 'active')
+                    ->count();
+                $delta = $this->capacity->calculateNextClientDeltaMbps((float) $plan->download_speed, $countBefore, $reuse);
+                if ($delta > 0 && $remaining < $delta) {
+                    Log::warning('Import skipped plan assignment due to ISP capacity', [
+                        'client_id' => $client->id,
+                        'plan_id' => $plan->id,
+                        'required_additional_down_mbps' => $delta,
+                        'remaining_down_mbps' => $remaining,
+                    ]);
+                    return;
+                }
+
                 // Crear relación en clients_plans
                 $clientPlan = ClientPlan::create([
                     'client_id' => $client->id,

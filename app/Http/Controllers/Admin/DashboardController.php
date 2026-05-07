@@ -9,23 +9,14 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 use App\Services\MikroTikService;
+use App\Services\IspCapacityService;
 use Illuminate\Support\Facades\Log;
 
 class DashboardController extends Controller
 {
-    public function fullStats(MikroTikService $mikroTikService)
+    public function fullStats(MikroTikService $mikroTikService, IspCapacityService $capacity)
     {
-        $activeUsers = Client::active()->count();
-        
-        $usersWithDebt = Client::whereHas('invoices', function($query) {
-            $query->pendingOrFailed();
-        })->count();
-
-        $inactiveUsers = Client::whereIn('service_status', [
-            'INACTIVE', 'INACTIVO', 
-            'SUSPENDED', 'SUSPENDIDO', 
-            'CANCELLED', 'CANCELADO'
-        ])->count();
+        $capacitySnapshot = $capacity->getCapacitySnapshot();
 
         $mikrotikData = [
             'online' => false,
@@ -43,10 +34,8 @@ class DashboardController extends Controller
             ];
 
             return response()->json([
-                'active_users' => $activeUsers,
-                'users_with_debt' => $usersWithDebt,
-                'inactive_users' => $inactiveUsers,
-                'mikrotik' => $mikrotikData
+                'mikrotik' => $mikrotikData,
+                'capacity' => $capacitySnapshot,
             ]);
         }
 
@@ -84,10 +73,8 @@ class DashboardController extends Controller
         }
 
         return response()->json([
-            'active_users' => $activeUsers,
-            'users_with_debt' => $usersWithDebt,
-            'inactive_users' => $inactiveUsers,
-            'mikrotik' => $mikrotikData
+            'mikrotik' => $mikrotikData,
+            'capacity' => $capacitySnapshot,
         ]);
     }
 

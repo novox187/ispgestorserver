@@ -7,6 +7,7 @@ use App\Models\Wallet;
 use App\Models\ClientPlan;
 use App\Models\Plan;
 use App\Services\MikroTikQueueSyncService;
+use App\Services\IspCapacityService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -17,7 +18,10 @@ use Illuminate\Support\Str;
 
 class ClienteController extends Controller
 {
-    public function __construct(protected MikroTikQueueSyncService $sync) {}
+    public function __construct(
+        protected MikroTikQueueSyncService $sync,
+        protected IspCapacityService $capacity
+    ) {}
 
     /**
      * Display a listing of the resource.
@@ -70,7 +74,38 @@ class ClienteController extends Controller
                 $data['service_status'] = $map[$upper] ?? 'ACTIVE';
             }
 
-            return DB::transaction(function () use ($data) {
+            $plan = null;
+            if (!empty($data['plan_id']) || !empty($data['plan'])) {
+                if (!empty($data['plan_id'])) {
+                    $plan = Plan::find($data['plan_id']);
+                } else {
+                    $plan = Plan::query()
+                        ->where('name', $data['plan'])
+                        ->orWhere('slug', $data['plan'])
+                        ->first();
+                }
+            }
+
+            if ($plan) {
+                $reuse = $this->capacity->getPlanReuseRatio($plan);
+                $snapshot = $this->capacity->getCapacitySnapshot();
+                $remaining = (float) ($snapshot['remaining_down_mbps'] ?? 0);
+                $countBefore = (int) ClientPlan::query()
+                    ->where('plan_id', $plan->id)
+                    ->where('status', 'active')
+                    ->count();
+                $delta = $this->capacity->calculateNextClientDeltaMbps((float) $plan->download_speed, $countBefore, $reuse);
+                if ($delta > 0 && $remaining < $delta) {
+                    return response()->json([
+                        'success' => false,
+                        'code' => 'ISP_CAPACITY_EXHAUSTED',
+                        'message' => 'Capacidad de ISP agotada',
+                        'capacity' => $snapshot,
+                    ], 409);
+                }
+            }
+
+            return DB::transaction(function () use ($data, $plan) {
                 $client = Client::create([
                     'full_name' => $data['full_name'],
                     'document_id' => $data['document_id'],
@@ -93,16 +128,7 @@ class ClienteController extends Controller
                 ]);
 
                 $clientPlan = null;
-                $plan = null;
                 if (!empty($data['plan_id']) || !empty($data['plan'])) {
-                    if (!empty($data['plan_id'])) {
-                        $plan = Plan::find($data['plan_id']);
-                    } else {
-                        $plan = Plan::query()
-                            ->where('name', $data['plan'])
-                            ->orWhere('slug', $data['plan'])
-                            ->first();
-                    }
                     if ($plan) {
                         $clientPlan = ClientPlan::create([
                             'client_id' => $client->id,

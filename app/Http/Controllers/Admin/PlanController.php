@@ -10,17 +10,25 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Services\MikroTikQueueSyncService;
+use App\Services\IspCapacityService;
 use Throwable;
 
 class PlanController extends Controller
 {
-    public function __construct(protected MikroTikQueueSyncService $queueSync) {}
+    public function __construct(
+        protected MikroTikQueueSyncService $queueSync,
+        protected IspCapacityService $capacity
+    ) {}
 
     public function index()
     {
         $plans = Plan::with(['features' => function ($q) {
             $q->ordered();
         }])->ordered()->get();
+
+        $snapshot = $this->capacity->getCapacitySnapshot();
+        $counts = $this->capacity->getPlanActiveClientCounts();
+        $deltas = $this->capacity->getNextClientDeltasByPlanId($plans->pluck('id')->all(), $counts);
 
         $data = $plans->map(function (Plan $p) {
             return [
@@ -33,6 +41,32 @@ class PlanController extends Controller
             ];
         });
 
+        $remaining = (float) ($snapshot['remaining_down_mbps'] ?? 0);
+        $data = $data->map(function (array $p) use ($deltas, $remaining) {
+            $pid = (int) ($p['id'] ?? 0);
+            $delta = (float) ($deltas[$pid]['delta_down_mbps'] ?? 0);
+            $p['next_client_required_down_mbps'] = $delta;
+            $p['can_add_next_client'] = $delta <= $remaining;
+            return $p;
+        });
+
+        return response()->json([
+            'data' => $data,
+            'capacity' => $snapshot,
+        ]);
+    }
+
+    public function names()
+    {
+        $plans = Plan::query()
+            ->ordered()
+            ->get(['id', 'name']);
+
+        $data = $plans->map(fn (Plan $p) => [
+            'id' => $p->id,
+            'name' => $p->name,
+        ]);
+
         return response()->json(['data' => $data]);
     }
 
@@ -41,6 +75,8 @@ class PlanController extends Controller
         $plans = Plan::with(['features' => function ($q) {
             $q->ordered();
         }])->ordered()->get();
+
+        $snapshot = $this->capacity->getCapacitySnapshot();
 
         $data = $plans->map(function (Plan $p) {
             $clientsCount = ClientPlan::where('plan_id', $p->id)->where('status', 'active')->count();
@@ -51,6 +87,7 @@ class PlanController extends Controller
                 'description' => $p->description,
                 'download_speed' => (int) $p->download_speed,
                 'upload_speed' => (int) $p->upload_speed,
+                'ratio' => (string) ($p->ratio ?? '1:1'),
                 'monthly_price' => (float) $p->monthly_price,
                 'status' => $p->is_active ? 'active' : 'inactive',
                 'clients' => $clientsCount,
@@ -75,7 +112,10 @@ class PlanController extends Controller
             ];
         });
 
-        return response()->json(['data' => $data]);
+        return response()->json([
+            'data' => $data,
+            'capacity' => $snapshot,
+        ]);
     }
 
     public function store(Request $request)
@@ -85,6 +125,7 @@ class PlanController extends Controller
             'description' => ['nullable', 'string'],
             'download_speed' => ['required', 'integer', 'min:0'],
             'upload_speed' => ['required', 'integer', 'min:0'],
+            'ratio' => ['nullable', 'string', 'max:20'],
             'monthly_price' => ['required', 'numeric', 'min:0'],
             'is_active' => ['required', 'boolean'],
             'symmetric' => ['nullable', 'boolean'],
@@ -103,6 +144,50 @@ class PlanController extends Controller
             'features.*.highlighted' => ['nullable', 'boolean'],
         ]);
 
+        $snapshot = $this->capacity->getCapacitySnapshot();
+        $totalDown = (float) ($snapshot['total_down_mbps'] ?? 0);
+        $totalUp = (float) ($snapshot['total_up_mbps'] ?? 0);
+        $requestedDown = (float) ($validated['download_speed'] ?? 0);
+        $requestedUp = (float) ($validated['upload_speed'] ?? 0);
+        if ($totalDown > 0 && $requestedDown > $totalDown) {
+            return response()->json([
+                'success' => false,
+                'code' => 'PLAN_SPEED_EXCEEDS_ISP_CAPACITY',
+                'message' => 'La velocidad de descarga del plan supera la capacidad física del ISP',
+                'capacity' => $snapshot,
+            ], 409);
+        }
+        if ($totalUp > 0 && $requestedUp > $totalUp) {
+            return response()->json([
+                'success' => false,
+                'code' => 'PLAN_SPEED_EXCEEDS_ISP_CAPACITY',
+                'message' => 'La velocidad de subida del plan supera la capacidad física del ISP',
+                'capacity' => $snapshot,
+            ], 409);
+        }
+        $tmp = new Plan(['ratio' => $validated['ratio'] ?? '1:1']);
+        $reuse = $this->capacity->getPlanReuseRatio($tmp);
+        $requiredDown = $requestedDown / max(1, $reuse);
+        $requiredUp = $requestedUp / max(1, $reuse);
+        $remainingDown = (float) ($snapshot['remaining_down_mbps'] ?? 0);
+        $remainingUp = (float) ($snapshot['remaining_up_mbps'] ?? 0);
+        if ($requiredDown > 0 && $remainingDown < $requiredDown) {
+            return response()->json([
+                'success' => false,
+                'code' => 'ISP_CAPACITY_EXHAUSTED',
+                'message' => 'Capacidad de ISP agotada',
+                'capacity' => $snapshot,
+            ], 409);
+        }
+        if ($totalUp > 0 && $requiredUp > 0 && $remainingUp < $requiredUp) {
+            return response()->json([
+                'success' => false,
+                'code' => 'ISP_CAPACITY_EXHAUSTED',
+                'message' => 'Capacidad de ISP agotada (subida)',
+                'capacity' => $snapshot,
+            ], 409);
+        }
+
         DB::beginTransaction();
         try {
             $baseSlug = Str::slug($validated['name']);
@@ -118,6 +203,7 @@ class PlanController extends Controller
                 'description' => $validated['description'] ?? null,
                 'download_speed' => $validated['download_speed'],
                 'upload_speed' => $validated['upload_speed'],
+                'ratio' => $validated['ratio'] ?? '1:1',
                 'monthly_price' => $validated['monthly_price'],
                 'is_active' => $validated['is_active'],
                 'priority' => 1,
@@ -162,6 +248,7 @@ class PlanController extends Controller
                 'description' => $plan->description,
                 'download_speed' => (int) $plan->download_speed,
                 'upload_speed' => (int) $plan->upload_speed,
+                'ratio' => (string) ($plan->ratio ?? '1:1'),
                 'monthly_price' => (float) $plan->monthly_price,
                 'status' => $plan->is_active ? 'active' : 'inactive',
                 'clients' => $clientsCount,
@@ -217,6 +304,7 @@ class PlanController extends Controller
             'description' => ['nullable', 'string'],
             'download_speed' => ['required', 'integer', 'min:0'],
             'upload_speed' => ['required', 'integer', 'min:0'],
+            'ratio' => ['nullable', 'string', 'max:20'],
             'monthly_price' => ['required', 'numeric', 'min:0'],
             'is_active' => ['required', 'boolean'],
             'symmetric' => ['nullable', 'boolean'],
@@ -235,6 +323,28 @@ class PlanController extends Controller
             'features.*.highlighted' => ['nullable', 'boolean'],
         ]);
 
+        $snapshot = $this->capacity->getCapacitySnapshot();
+        $totalDown = (float) ($snapshot['total_down_mbps'] ?? 0);
+        $totalUp = (float) ($snapshot['total_up_mbps'] ?? 0);
+        $requestedDown = (float) ($validated['download_speed'] ?? 0);
+        $requestedUp = (float) ($validated['upload_speed'] ?? 0);
+        if ($totalDown > 0 && $requestedDown > $totalDown) {
+            return response()->json([
+                'success' => false,
+                'code' => 'PLAN_SPEED_EXCEEDS_ISP_CAPACITY',
+                'message' => 'La velocidad de descarga del plan supera la capacidad física del ISP',
+                'capacity' => $snapshot,
+            ], 409);
+        }
+        if ($totalUp > 0 && $requestedUp > $totalUp) {
+            return response()->json([
+                'success' => false,
+                'code' => 'PLAN_SPEED_EXCEEDS_ISP_CAPACITY',
+                'message' => 'La velocidad de subida del plan supera la capacidad física del ISP',
+                'capacity' => $snapshot,
+            ], 409);
+        }
+
         $plan->fill([
             'name' => $validated['name'],
             'description' => $validated['description'] ?? $plan->description,
@@ -243,6 +353,7 @@ class PlanController extends Controller
             'monthly_price' => $validated['monthly_price'],
             'is_active' => $validated['is_active'],
         ]);
+        if (array_key_exists('ratio', $validated)) $plan->ratio = $validated['ratio'] ?? $plan->ratio;
         if (array_key_exists('symmetric', $validated)) $plan->symmetric = (bool) $validated['symmetric'];
         if (array_key_exists('setup_price', $validated)) $plan->setup_price = (float) $validated['setup_price'];
         if (array_key_exists('billing_cycle', $validated)) $plan->billing_cycle = $validated['billing_cycle'];
@@ -275,6 +386,7 @@ class PlanController extends Controller
             'description' => $plan->description,
             'download_speed' => (int) $plan->download_speed,
             'upload_speed' => (int) $plan->upload_speed,
+            'ratio' => (string) ($plan->ratio ?? '1:1'),
             'monthly_price' => (float) $plan->monthly_price,
             'status' => $plan->is_active ? 'active' : 'inactive',
             'clients' => $clientsCount,
@@ -318,6 +430,7 @@ class PlanController extends Controller
             'description' => $plan->description,
             'download_speed' => (int) $plan->download_speed,
             'upload_speed' => (int) $plan->upload_speed,
+            'ratio' => (string) ($plan->ratio ?? '1:1'),
             'monthly_price' => (float) $plan->monthly_price,
             'status' => $plan->is_active ? 'active' : 'inactive',
             'clients' => $clientsCount,

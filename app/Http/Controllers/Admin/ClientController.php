@@ -9,6 +9,7 @@ use App\Models\Plan;
 use App\Models\Audit;
 use App\Services\MikroTikQueueSyncService;
 use App\Services\MikroTikService;
+use App\Services\IspCapacityService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -155,7 +156,7 @@ class ClientController extends Controller
     /**
      * Actualizar cliente: Datos básicos, plan y registro de auditoría con motivo
      */
-    public function update(Request $request, $id, MikroTikQueueSyncService $sync)
+    public function update(Request $request, $id, MikroTikQueueSyncService $sync, IspCapacityService $capacity)
     {
         $request->validate([
             'full_name' => 'required|string|max:255',
@@ -179,6 +180,48 @@ class ClientController extends Controller
         $previousPlan = $previousClientPlan?->plan;
         $previousQueueName = $previousClientPlan?->mikrotik_queue_id;
         $previousIp = $previousClientPlan?->ip_address ?: $client->ip;
+
+        if ($request->has('plan_id')) {
+            $newPlanId = $request->plan_id ?: null;
+            $currentPlanId = $previousClientPlan?->plan_id;
+            if ($newPlanId != $currentPlanId) {
+                $snapshot = $capacity->getCapacitySnapshot();
+                $remaining = (float) ($snapshot['remaining_down_mbps'] ?? 0);
+
+                $deltaNew = 0.0;
+                if ($newPlanId) {
+                    $newPlan = Plan::findOrFail($newPlanId);
+                    $reuseNew = $capacity->getPlanReuseRatio($newPlan);
+                    $newCountBefore = (int) \App\Models\ClientPlan::query()
+                        ->where('plan_id', $newPlanId)
+                        ->where('status', 'active')
+                        ->count();
+                    $deltaNew = $capacity->calculateNextClientDeltaMbps((float) $newPlan->download_speed, $newCountBefore, $reuseNew);
+                }
+
+                $deltaOld = 0.0;
+                if ($currentPlanId && $previousPlan) {
+                    $reuseOld = $capacity->getPlanReuseRatio($previousPlan);
+                    $oldCountBefore = (int) \App\Models\ClientPlan::query()
+                        ->where('plan_id', $currentPlanId)
+                        ->where('status', 'active')
+                        ->count();
+                    $beforeOld = $capacity->calculateParentMbps((float) $previousPlan->download_speed, $oldCountBefore, $reuseOld);
+                    $afterOld = $capacity->calculateParentMbps((float) $previousPlan->download_speed, max(0, $oldCountBefore - 1), $reuseOld);
+                    $deltaOld = $afterOld - $beforeOld;
+                }
+
+                $requiredAdditional = max(0.0, $deltaNew + $deltaOld);
+                if ($requiredAdditional > 0 && $remaining < $requiredAdditional) {
+                    return response()->json([
+                        'success' => false,
+                        'code' => 'ISP_CAPACITY_EXHAUSTED',
+                        'message' => 'Capacidad de ISP agotada',
+                        'capacity' => $snapshot,
+                    ], 409);
+                }
+            }
+        }
         
         DB::beginTransaction();
         try {
@@ -280,6 +323,8 @@ class ClientController extends Controller
                     $oldValues['document_id'] ?? null,
                     (bool) ($request->input('mikrotik_force_replace', false))
                 );
+            } elseif ($previousClientPlan && $previousPlan) {
+                $sync->removeClientQueueAndRecalculate($client, $previousClientPlan, $previousPlan);
             }
 
             DB::commit();

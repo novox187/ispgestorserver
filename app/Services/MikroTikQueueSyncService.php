@@ -15,7 +15,10 @@ use Throwable;
 
 class MikroTikQueueSyncService
 {
-    public function __construct(protected MikroTikService $mikrotik) {}
+    public function __construct(
+        protected MikroTikService $mikrotik,
+        protected IspCapacityService $capacity
+    ) {}
 
     /**
      * Helper to log MikroTik audits manually since this is not an Eloquent model.
@@ -175,14 +178,24 @@ class MikroTikQueueSyncService
     {
         $upload = $plan->upload_limit ?: ($plan->upload_speed ? $plan->upload_speed . 'M' : '0');
         $download = $plan->download_limit ?: ($plan->download_speed ? $plan->download_speed . 'M' : '0');
+        $uploadMbps = $this->toMbps($this->normalizeSpeedValue($upload));
+        $downloadMbps = $this->toMbps($this->normalizeSpeedValue($download));
+        $reuse = $this->capacity->getPlanReuseRatio($plan);
+        $clients = (int) \App\Models\ClientPlan::query()
+            ->where('plan_id', $plan->id)
+            ->where('status', 'active')
+            ->count();
+        $parentUp = $this->capacity->calculateParentMbps($uploadMbps, $clients, $reuse);
+        $parentDown = $this->capacity->calculateParentMbps($downloadMbps, $clients, $reuse);
+        $parentMax = $this->formatSpeedPairFromStrings($this->formatMbps($parentUp), $this->formatMbps($parentDown));
         $target = count($targets) ? implode(',', $targets) : '0.0.0.0/0';
         $params = [
             'name' => $this->normalizePlanQueueName($plan),
             'target' => $target,
             'parent' => 'none',
             'priority' => (string) max(1, min(8, (int) $plan->priority)),
-            'max-limit' => $this->formatSpeedPairFromStrings($upload, $download),
-            'limit-at' => $this->formatSpeedPairFromStrings($upload, $download),
+            'max-limit' => $parentMax,
+            'limit-at' => $parentMax,
         ];
 
         if (!empty($plan->burst_limit)) {
@@ -199,9 +212,12 @@ class MikroTikQueueSyncService
         $upload = $plan->upload_limit ?: ($plan->upload_speed ? $plan->upload_speed . 'M' : '0');
         $download = $plan->download_limit ?: ($plan->download_speed ? $plan->download_speed . 'M' : '0');
         $maxLimit = $this->formatSpeedPairFromStrings($upload, $download);
+        $reuse = $this->capacity->getPlanReuseRatio($plan);
+        $uploadMbps = $this->toMbps($this->normalizeSpeedValue($upload));
+        $downloadMbps = $this->toMbps($this->normalizeSpeedValue($download));
         $limitAt = $this->formatSpeedPairFromStrings(
-            $this->calculatePercentSpeed($upload, 10),
-            $this->calculatePercentSpeed($download, 10)
+            $this->formatMbps($uploadMbps / $reuse),
+            $this->formatMbps($downloadMbps / $reuse)
         );
         $params = [
             'name' => $this->buildClientQueueName($client),
@@ -469,20 +485,18 @@ class MikroTikQueueSyncService
 
     public function validatePlanQueue(Plan $plan, array $queue): bool
     {
-        $priorityOk = ((string) ($queue['priority'] ?? '8')) === (string) max(1, min(8, (int) $plan->priority));
-        $expectedMax = $this->formatSpeedPair(
-            (int) $plan->upload_speed,
-            (int) $plan->download_speed
-        );
-        $maxLimitOk = ($queue['max-limit'] ?? '') === $expectedMax;
-        $limitAtOk = ($queue['limit-at'] ?? '') === $expectedMax;
+        $targets = $this->buildPlanTargetIps($plan);
+        $expected = $this->buildPlanQueueParams($plan, $targets);
+
+        $priorityOk = ((string) ($queue['priority'] ?? '8')) === (string) ($expected['priority'] ?? '8');
+        $maxLimitOk = ((string) ($queue['max-limit'] ?? '')) === (string) ($expected['max-limit'] ?? '');
+        $limitAtOk = ((string) ($queue['limit-at'] ?? '')) === (string) ($expected['limit-at'] ?? '');
 
         $burstOk = true;
-        if (!empty($plan->burst_limit)) {
-            $expectedBurst = $this->normalizeBurst($plan->burst_limit, $expectedMax);
-            $burstOk = ($queue['burst-limit'] ?? '') === $expectedBurst
-                && ($queue['burst-threshold'] ?? '') === $expectedMax
-                && ($queue['burst-time'] ?? '') === '8s/8s';
+        if (!empty($expected['burst-limit'])) {
+            $burstOk = ((string) ($queue['burst-limit'] ?? '')) === (string) ($expected['burst-limit'] ?? '')
+                && ((string) ($queue['burst-threshold'] ?? '')) === (string) ($expected['burst-threshold'] ?? '')
+                && ((string) ($queue['burst-time'] ?? '')) === (string) ($expected['burst-time'] ?? '');
         }
 
         return $priorityOk && $maxLimitOk && $limitAtOk && $burstOk;
@@ -757,6 +771,7 @@ class MikroTikQueueSyncService
             if ($oldIp) {
                 $this->removeIpFromPlanTarget($oldPlanQueueName, $oldIp);
             }
+            $this->ensurePlanQueue($previousPlan);
         }
 
         Log::info('Client queue synchronized', [
@@ -776,6 +791,28 @@ class MikroTikQueueSyncService
             'rename_action' => $renameAction,
             'router' => $result,
         ];
+    }
+
+    public function removeClientQueueAndRecalculate(Client $client, ?ClientPlan $clientPlan, ?Plan $plan): void
+    {
+        if (!$this->mikrotik->getClient()) {
+            throw new \RuntimeException('MikroTik no conectado: verifica MIKROTIK_HOST/USER/PASS y permisos');
+        }
+
+        $names = [];
+        if ($clientPlan?->mikrotik_queue_id) {
+            $names[] = $clientPlan->mikrotik_queue_id;
+        }
+        $names[] = $this->buildClientQueueName($client);
+        $names = array_values(array_unique(array_filter(array_map('trim', $names))));
+
+        foreach ($names as $name) {
+            $this->deleteQueueByName($name);
+        }
+
+        if ($plan) {
+            $this->ensurePlanQueue($plan);
+        }
     }
 
     public function withRetries(callable $fn)
