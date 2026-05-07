@@ -297,6 +297,14 @@ class IspCapacityService
         $raw = trim($v);
         if ($raw === '' || $raw === '0') return 0.0;
 
+        if (preg_match('/^[0-9.]+$/', $raw)) {
+            $num = (float) $raw;
+            if ($num >= 10000) {
+                return $num / 1000000.0;
+            }
+            return $num;
+        }
+
         $suffix = strtoupper(substr($raw, -1));
         $num = (float) preg_replace('/[^0-9.]/', '', $raw);
 
