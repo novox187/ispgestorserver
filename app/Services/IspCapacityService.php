@@ -190,6 +190,30 @@ class IspCapacityService
         }
     }
 
+    public function getPlansAssignedDownMbps(): float
+    {
+        try {
+            return (float) Plan::query()->sum('download_speed');
+        } catch (Throwable $e) {
+            Log::warning('Unable to compute assigned Mbps by plans (down)', [
+                'error' => $e->getMessage(),
+            ]);
+            return 0.0;
+        }
+    }
+
+    public function getPlansAssignedUpMbps(): float
+    {
+        try {
+            return (float) Plan::query()->sum('upload_speed');
+        } catch (Throwable $e) {
+            Log::warning('Unable to compute assigned Mbps by plans (up)', [
+                'error' => $e->getMessage(),
+            ]);
+            return 0.0;
+        }
+    }
+
     public function getRouterUsedDownMbps(): ?float
     {
         try {
@@ -233,6 +257,13 @@ class IspCapacityService
         $totalDown = $this->getInventoryDownMbps();
         $totalUp = $this->getInventoryUpMbps();
 
+        $plansAssignedDown = $this->getPlansAssignedDownMbps();
+        $plansAssignedUp = $this->getPlansAssignedUpMbps();
+        $plansRemainingDown = max(0.0, $totalDown - $plansAssignedDown);
+        $plansRemainingUp = max(0.0, $totalUp - $plansAssignedUp);
+        $plansPercentDown = $totalDown > 0 ? min(100.0, ($plansAssignedDown / $totalDown) * 100.0) : 0.0;
+        $plansPercentUp = $totalUp > 0 ? min(100.0, ($plansAssignedUp / $totalUp) * 100.0) : 0.0;
+
         $expectedDown = $this->getDbExpectedUsedDownMbps();
         $expectedUp = $this->getDbExpectedUsedUpMbps();
 
@@ -248,6 +279,9 @@ class IspCapacityService
         $percentDown = $totalDown > 0 ? min(100.0, ($usedDown / $totalDown) * 100.0) : 0.0;
         $percentUp = $totalUp > 0 ? min(100.0, ($usedUp / $totalUp) * 100.0) : 0.0;
 
+        $clientsPercentDown = $totalDown > 0 ? min(100.0, ($expectedDown / $totalDown) * 100.0) : 0.0;
+        $clientsPercentUp = $totalUp > 0 ? min(100.0, ($expectedUp / $totalUp) * 100.0) : 0.0;
+
         return [
             'total_down_mbps' => $totalDown,
             'used_down_mbps' => $usedDown,
@@ -260,6 +294,16 @@ class IspCapacityService
             'percent_used_up' => $percentUp,
             'warn_80' => max($percentDown, $percentUp) >= 80.0,
             'reuse_ratio' => $this->getEffectiveReuseRatio(),
+            'plans_assigned_down_mbps' => $plansAssignedDown,
+            'plans_assigned_up_mbps' => $plansAssignedUp,
+            'plans_remaining_down_mbps' => $plansRemainingDown,
+            'plans_remaining_up_mbps' => $plansRemainingUp,
+            'plans_percent_assigned_down' => $plansPercentDown,
+            'plans_percent_assigned_up' => $plansPercentUp,
+            'clients_expected_used_down_mbps' => $expectedDown,
+            'clients_expected_used_up_mbps' => $expectedUp,
+            'clients_percent_used_down' => $clientsPercentDown,
+            'clients_percent_used_up' => $clientsPercentUp,
         ];
     }
 

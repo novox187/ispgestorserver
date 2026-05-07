@@ -165,25 +165,21 @@ class PlanController extends Controller
                 'capacity' => $snapshot,
             ], 409);
         }
-        $tmp = new Plan(['ratio' => $validated['ratio'] ?? '1:1']);
-        $reuse = $this->capacity->getPlanReuseRatio($tmp);
-        $requiredDown = $requestedDown / max(1, $reuse);
-        $requiredUp = $requestedUp / max(1, $reuse);
-        $remainingDown = (float) ($snapshot['remaining_down_mbps'] ?? 0);
-        $remainingUp = (float) ($snapshot['remaining_up_mbps'] ?? 0);
-        if ($requiredDown > 0 && $remainingDown < $requiredDown) {
+        $remainingDown = (float) ($snapshot['plans_remaining_down_mbps'] ?? 0);
+        $remainingUp = (float) ($snapshot['plans_remaining_up_mbps'] ?? 0);
+        if ($totalDown > 0 && $requestedDown > 0 && $remainingDown < $requestedDown) {
             return response()->json([
                 'success' => false,
                 'code' => 'ISP_CAPACITY_EXHAUSTED',
-                'message' => 'Capacidad de ISP agotada',
+                'message' => 'Capacidad insuficiente: tiene ' . (int) round($remainingDown) . ' megas disponibles de ' . (int) round($totalDown) . ' totales',
                 'capacity' => $snapshot,
             ], 409);
         }
-        if ($totalUp > 0 && $requiredUp > 0 && $remainingUp < $requiredUp) {
+        if ($totalUp > 0 && $requestedUp > 0 && $remainingUp < $requestedUp) {
             return response()->json([
                 'success' => false,
                 'code' => 'ISP_CAPACITY_EXHAUSTED',
-                'message' => 'Capacidad de ISP agotada (subida)',
+                'message' => 'Capacidad insuficiente: tiene ' . (int) round($remainingUp) . ' megas disponibles de ' . (int) round($totalUp) . ' totales',
                 'capacity' => $snapshot,
             ], 409);
         }
@@ -341,6 +337,26 @@ class PlanController extends Controller
                 'success' => false,
                 'code' => 'PLAN_SPEED_EXCEEDS_ISP_CAPACITY',
                 'message' => 'La velocidad de subida del plan supera la capacidad física del ISP',
+                'capacity' => $snapshot,
+            ], 409);
+        }
+        $assignedDown = (float) ($snapshot['plans_assigned_down_mbps'] ?? 0);
+        $assignedUp = (float) ($snapshot['plans_assigned_up_mbps'] ?? 0);
+        $availableDown = $totalDown > 0 ? max(0.0, $totalDown - max(0.0, $assignedDown - (float) $plan->download_speed)) : 0.0;
+        $availableUp = $totalUp > 0 ? max(0.0, $totalUp - max(0.0, $assignedUp - (float) $plan->upload_speed)) : 0.0;
+        if ($totalDown > 0 && $requestedDown > 0 && $requestedDown > $availableDown) {
+            return response()->json([
+                'success' => false,
+                'code' => 'ISP_CAPACITY_EXHAUSTED',
+                'message' => 'Capacidad insuficiente: tiene ' . (int) round($availableDown) . ' megas disponibles de ' . (int) round($totalDown) . ' totales',
+                'capacity' => $snapshot,
+            ], 409);
+        }
+        if ($totalUp > 0 && $requestedUp > 0 && $requestedUp > $availableUp) {
+            return response()->json([
+                'success' => false,
+                'code' => 'ISP_CAPACITY_EXHAUSTED',
+                'message' => 'Capacidad insuficiente: tiene ' . (int) round($availableUp) . ' megas disponibles de ' . (int) round($totalUp) . ' totales',
                 'capacity' => $snapshot,
             ], 409);
         }
