@@ -15,6 +15,9 @@ use Throwable;
 
 class MikroTikQueueSyncService
 {
+    protected const DEFAULT_QUEUE_TYPE_UPLOAD = 'pcq-upload-default';
+    protected const DEFAULT_QUEUE_TYPE_DOWNLOAD = 'pcq-download-default';
+
     public function __construct(
         protected MikroTikService $mikrotik,
         protected IspCapacityService $capacity
@@ -49,6 +52,11 @@ class MikroTikQueueSyncService
     public function formatSpeedPair(int $uploadMbps, int $downloadMbps): string
     {
         return $uploadMbps . 'M/' . $downloadMbps . 'M';
+    }
+
+    protected function getDefaultQueueTypePair(): string
+    {
+        return self::DEFAULT_QUEUE_TYPE_UPLOAD . '/' . self::DEFAULT_QUEUE_TYPE_DOWNLOAD;
     }
 
     protected function normalizePlanQueueName(Plan $plan): string
@@ -178,24 +186,16 @@ class MikroTikQueueSyncService
     {
         $upload = $plan->upload_limit ?: ($plan->upload_speed ? $plan->upload_speed . 'M' : '0');
         $download = $plan->download_limit ?: ($plan->download_speed ? $plan->download_speed . 'M' : '0');
-        $uploadMbps = $this->toMbps($this->normalizeSpeedValue($upload));
-        $downloadMbps = $this->toMbps($this->normalizeSpeedValue($download));
-        $reuse = $this->capacity->getPlanReuseRatio($plan);
-        $clients = (int) \App\Models\ClientPlan::query()
-            ->where('plan_id', $plan->id)
-            ->where('status', 'active')
-            ->count();
-        $parentUp = $this->capacity->calculateParentMbps($uploadMbps, $clients, $reuse);
-        $parentDown = $this->capacity->calculateParentMbps($downloadMbps, $clients, $reuse);
-        $parentMax = $this->formatSpeedPairFromStrings($this->formatMbps($parentUp), $this->formatMbps($parentDown));
+        $maxLimit = $this->formatSpeedPairFromStrings($upload, $download);
         $target = count($targets) ? implode(',', $targets) : '0.0.0.0/0';
         $params = [
             'name' => $this->normalizePlanQueueName($plan),
             'target' => $target,
             'parent' => 'none',
             'priority' => (string) max(1, min(8, (int) $plan->priority)),
-            'max-limit' => $parentMax,
-            'limit-at' => $parentMax,
+            'max-limit' => $maxLimit,
+            'limit-at' => $maxLimit,
+            'queue' => $this->getDefaultQueueTypePair(),
         ];
 
         if (!empty($plan->burst_limit)) {
@@ -226,6 +226,7 @@ class MikroTikQueueSyncService
             'priority' => (string) max(1, min(8, (int) $plan->priority)),
             'max-limit' => $maxLimit,
             'limit-at' => $limitAt,
+            'queue' => $this->getDefaultQueueTypePair(),
         ];
 
         if (!empty($plan->burst_limit)) {
@@ -491,6 +492,7 @@ class MikroTikQueueSyncService
         $priorityOk = ((string) ($queue['priority'] ?? '8')) === (string) ($expected['priority'] ?? '8');
         $maxLimitOk = ((string) ($queue['max-limit'] ?? '')) === (string) ($expected['max-limit'] ?? '');
         $limitAtOk = ((string) ($queue['limit-at'] ?? '')) === (string) ($expected['limit-at'] ?? '');
+        $queueTypeOk = ((string) ($queue['queue'] ?? '')) === (string) ($expected['queue'] ?? '');
 
         $burstOk = true;
         if (!empty($expected['burst-limit'])) {
@@ -499,7 +501,7 @@ class MikroTikQueueSyncService
                 && ((string) ($queue['burst-time'] ?? '')) === (string) ($expected['burst-time'] ?? '');
         }
 
-        return $priorityOk && $maxLimitOk && $limitAtOk && $burstOk;
+        return $priorityOk && $maxLimitOk && $limitAtOk && $queueTypeOk && $burstOk;
     }
 
     public function createClientAndQueue(Client $client, ?ClientPlan $clientPlan, Plan $plan): array

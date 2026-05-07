@@ -344,73 +344,127 @@ class PlanController extends Controller
                 'capacity' => $snapshot,
             ], 409);
         }
+        DB::beginTransaction();
+        try {
+            $plan->fill([
+                'name' => $validated['name'],
+                'description' => $validated['description'] ?? $plan->description,
+                'download_speed' => $validated['download_speed'],
+                'upload_speed' => $validated['upload_speed'],
+                'monthly_price' => $validated['monthly_price'],
+                'is_active' => $validated['is_active'],
+            ]);
+            if (array_key_exists('ratio', $validated)) $plan->ratio = $validated['ratio'] ?? $plan->ratio;
+            if (array_key_exists('symmetric', $validated)) $plan->symmetric = (bool) $validated['symmetric'];
+            if (array_key_exists('setup_price', $validated)) $plan->setup_price = (float) $validated['setup_price'];
+            if (array_key_exists('billing_cycle', $validated)) $plan->billing_cycle = $validated['billing_cycle'];
+            if (array_key_exists('category', $validated)) $plan->category = $validated['category'];
+            if (array_key_exists('priority', $validated)) $plan->priority = (int) $validated['priority'];
+            if (array_key_exists('is_featured', $validated)) $plan->is_featured = (bool) $validated['is_featured'];
+            if (array_key_exists('mikrotik_queue_name', $validated)) $plan->mikrotik_queue_name = $validated['mikrotik_queue_name'];
+            if (array_key_exists('download_limit', $validated)) $plan->download_limit = $validated['download_limit'];
+            if (array_key_exists('upload_limit', $validated)) $plan->upload_limit = $validated['upload_limit'];
+            if (array_key_exists('burst_limit', $validated)) $plan->burst_limit = $validated['burst_limit'];
+            $plan->save();
 
-        $plan->fill([
-            'name' => $validated['name'],
-            'description' => $validated['description'] ?? $plan->description,
-            'download_speed' => $validated['download_speed'],
-            'upload_speed' => $validated['upload_speed'],
-            'monthly_price' => $validated['monthly_price'],
-            'is_active' => $validated['is_active'],
-        ]);
-        if (array_key_exists('ratio', $validated)) $plan->ratio = $validated['ratio'] ?? $plan->ratio;
-        if (array_key_exists('symmetric', $validated)) $plan->symmetric = (bool) $validated['symmetric'];
-        if (array_key_exists('setup_price', $validated)) $plan->setup_price = (float) $validated['setup_price'];
-        if (array_key_exists('billing_cycle', $validated)) $plan->billing_cycle = $validated['billing_cycle'];
-        if (array_key_exists('category', $validated)) $plan->category = $validated['category'];
-        if (array_key_exists('priority', $validated)) $plan->priority = (int) $validated['priority'];
-        if (array_key_exists('is_featured', $validated)) $plan->is_featured = (bool) $validated['is_featured'];
-        if (array_key_exists('mikrotik_queue_name', $validated)) $plan->mikrotik_queue_name = $validated['mikrotik_queue_name'];
-        if (array_key_exists('download_limit', $validated)) $plan->download_limit = $validated['download_limit'];
-        if (array_key_exists('upload_limit', $validated)) $plan->upload_limit = $validated['upload_limit'];
-        if (array_key_exists('burst_limit', $validated)) $plan->burst_limit = $validated['burst_limit'];
-        $plan->save();
-
-        if (array_key_exists('features', $validated)) {
-            $plan->features()->delete();
-            $features = $validated['features'] ?? [];
-            foreach ($features as $i => $f) {
-                $plan->features()->create([
-                    'feature' => $f['feature'],
-                    'order' => $f['order'] ?? $i,
-                    'highlighted' => $f['highlighted'] ?? false,
-                ]);
+            if (array_key_exists('features', $validated)) {
+                $plan->features()->delete();
+                $features = $validated['features'] ?? [];
+                foreach ($features as $i => $f) {
+                    $plan->features()->create([
+                        'feature' => $f['feature'],
+                        'order' => $f['order'] ?? $i,
+                        'highlighted' => $f['highlighted'] ?? false,
+                    ]);
+                }
             }
-        }
 
-        $clientsCount = ClientPlan::where('plan_id', $plan->id)->where('status', 'active')->count();
-        $revenue = $clientsCount * (float) $plan->monthly_price;
-        $out = [
-            'id' => $plan->id,
-            'name' => $plan->name,
-            'description' => $plan->description,
-            'download_speed' => (int) $plan->download_speed,
-            'upload_speed' => (int) $plan->upload_speed,
-            'ratio' => (string) ($plan->ratio ?? '1:1'),
-            'monthly_price' => (float) $plan->monthly_price,
-            'status' => $plan->is_active ? 'active' : 'inactive',
-            'clients' => $clientsCount,
-            'revenue' => $revenue,
-            'symmetric' => (bool) $plan->symmetric,
-            'setup_price' => (float) $plan->setup_price,
-            'billing_cycle' => $plan->billing_cycle,
-            'category' => $plan->category,
-            'priority' => (int) $plan->priority,
-            'is_featured' => (bool) $plan->is_featured,
-            'mikrotik_queue_name' => $plan->mikrotik_queue_name,
-            'download_limit' => $plan->download_limit,
-            'upload_limit' => $plan->upload_limit,
-            'burst_limit' => $plan->burst_limit,
-            'features' => $plan->features()->ordered()->get()->map(function ($f) {
-                return [
-                    'feature' => $f->feature,
-                    'order' => (int) $f->order,
-                    'highlighted' => (bool) $f->highlighted,
+            $mkPlan = $this->queueSync->ensurePlanQueue($plan);
+            if (($mkPlan['action'] ?? '') === 'failed') {
+                throw new \RuntimeException($mkPlan['reason'] ?? 'Fallo al actualizar plan en MikroTik');
+            }
+
+            $syncedClients = [];
+            $clientPlans = ClientPlan::query()
+                ->with('client')
+                ->where('plan_id', $plan->id)
+                ->where('status', 'active')
+                ->get();
+            foreach ($clientPlans as $cp) {
+                if (!$cp->client) {
+                    $syncedClients[] = [
+                        'client_plan_id' => $cp->id,
+                        'error' => 'Cliente no encontrado',
+                    ];
+                    continue;
+                }
+                $syncedClients[] = [
+                    'client_id' => $cp->client->id,
+                    'client_plan_id' => $cp->id,
+                    'result' => $this->queueSync->syncClientQueueForPlan($cp->client, $cp, $plan),
                 ];
-            })->values(),
-        ];
+            }
 
-        return response()->json(['data' => $out]);
+            DB::commit();
+
+            $clientsCount = ClientPlan::where('plan_id', $plan->id)->where('status', 'active')->count();
+            $revenue = $clientsCount * (float) $plan->monthly_price;
+            $out = [
+                'id' => $plan->id,
+                'name' => $plan->name,
+                'description' => $plan->description,
+                'download_speed' => (int) $plan->download_speed,
+                'upload_speed' => (int) $plan->upload_speed,
+                'ratio' => (string) ($plan->ratio ?? '1:1'),
+                'monthly_price' => (float) $plan->monthly_price,
+                'status' => $plan->is_active ? 'active' : 'inactive',
+                'clients' => $clientsCount,
+                'revenue' => $revenue,
+                'symmetric' => (bool) $plan->symmetric,
+                'setup_price' => (float) $plan->setup_price,
+                'billing_cycle' => $plan->billing_cycle,
+                'category' => $plan->category,
+                'priority' => (int) $plan->priority,
+                'is_featured' => (bool) $plan->is_featured,
+                'mikrotik_queue_name' => $plan->mikrotik_queue_name,
+                'download_limit' => $plan->download_limit,
+                'upload_limit' => $plan->upload_limit,
+                'burst_limit' => $plan->burst_limit,
+                'features' => $plan->features()->ordered()->get()->map(function ($f) {
+                    return [
+                        'feature' => $f->feature,
+                        'order' => (int) $f->order,
+                        'highlighted' => (bool) $f->highlighted,
+                    ];
+                })->values(),
+                'plan_queue' => [
+                    'action' => $mkPlan['action'] ?? null,
+                    'name' => $mkPlan['name'] ?? null,
+                ],
+                'clients_queue_sync' => [
+                    'count' => count($syncedClients),
+                ],
+            ];
+
+            return response()->json(['data' => $out]);
+        } catch (Throwable $e) {
+            DB::rollBack();
+            Log::error('Plan update rollback due to MikroTik failure', [
+                'error_code' => 'MIKROTIK_UPDATE_FAILED',
+                'message' => $e->getMessage(),
+                'when' => now()->toDateTimeString(),
+                'plan_id' => $plan->id,
+                'plan_payload' => $validated,
+            ]);
+            return response()->json([
+                'error' => [
+                    'code' => 'MIKROTIK_UPDATE_FAILED',
+                    'message' => 'La actualización en MikroTik falló y se revirtió la actualización en la base de datos.',
+                    'details' => $e->getMessage(),
+                    'recommendations' => 'Verifique credenciales y conectividad con MikroTik, y valide límites/priority.',
+                ]
+            ], 500);
+        }
     }
 
     public function setStatus(Request $request, int $id)
