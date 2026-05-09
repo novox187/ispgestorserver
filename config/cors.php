@@ -19,12 +19,18 @@ return [
 
     'allowed_origins_patterns' => [],
 
-    'allowed_headers' => ['*'],
+    'allowed_headers' => [
+        'Content-Type',
+        'X-Requested-With',
+        'Authorization',
+        'Accept',
+        'Origin',
+    ],
 
     'allowed_methods' => ['*'],
 
     // Set to true only if you are using cookies / Authorization header cross-site
-    'supports_credentials' => true,
+    'supports_credentials' => false,
 
     'exposed_headers' => [],
 

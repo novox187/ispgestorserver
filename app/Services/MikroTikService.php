@@ -362,6 +362,125 @@ public function getClientQueues(string $clientIp): array
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Firewall filter & NAT sync
+    // -------------------------------------------------------------------------
+
+    /** Lee las reglas actuales de /ip/firewall/filter del router. */
+    public function getFirewallFilterRules(): array
+    {
+        if (!$this->client) return [];
+        return $this->client->query(new Query('/ip/firewall/filter/print'))->read();
+    }
+
+    /** Lee las reglas actuales de /ip/firewall/nat del router. */
+    public function getFirewallNatRules(): array
+    {
+        if (!$this->client) return [];
+        return $this->client->query(new Query('/ip/firewall/nat/print'))->read();
+    }
+
+    /**
+     * Envía /quit al router y cierra la sesión API de forma limpia.
+     * Siempre llamar en un bloque finally después de syncFilterRules/syncNatRules.
+     */
+    public function disconnect(): void
+    {
+        if (!$this->client) return;
+        try {
+            // /quit indica al router que cierre la sesión correctamente
+            $this->client->query(new Query('/quit'))->read();
+        } catch (\Throwable $e) {
+            // El router cierra el socket al recibir /quit; read() lanzará — es esperado
+        } finally {
+            $this->client = null;
+        }
+    }
+
+    /**
+     * Elimina todas las entradas de un path usando un único comando remove.
+     * Usa el parámetro 'numbers' con todos los índices, evitando N llamadas individuales.
+     */
+    private function bulkRemoveAll(string $path): void
+    {
+        $existing = $this->client->query(new Query("{$path}/print"))->read();
+        if (empty($existing)) return;
+
+        $numbers = implode(',', range(0, count($existing) - 1));
+        $q = new Query("{$path}/remove");
+        $q->equal('numbers', $numbers);
+        $this->client->query($q)->read();
+    }
+
+    /**
+     * Reemplaza todas las reglas de /ip/firewall/filter del router por $rules.
+     * Las reglas deben venir ordenadas por prioridad (campo 'priority' ascendente).
+     */
+    public function syncFilterRules(array $rules): void
+    {
+        if (!$this->client) return;
+
+        $this->bulkRemoveAll('/ip/firewall/filter');
+
+        foreach ($rules as $rule) {
+            $q = new Query('/ip/firewall/filter/add');
+            $q->equal('chain',  $rule['chain']);
+            $q->equal('action', $rule['action']);
+
+            if (($rule['protocol'] ?? 'any') !== 'any') {
+                $q->equal('protocol', $rule['protocol']);
+            }
+            if (!empty($rule['src_address']))      $q->equal('src-address',      $rule['src_address']);
+            if (!empty($rule['src_address_list'])) $q->equal('src-address-list', $rule['src_address_list']);
+            if (!empty($rule['dst_address']))      $q->equal('dst-address',      $rule['dst_address']);
+            if (!empty($rule['src_port']))         $q->equal('src-port',         $rule['src_port']);
+            if (!empty($rule['dst_port']))         $q->equal('dst-port',         $rule['dst_port']);
+            if (!empty($rule['in_interface']))     $q->equal('in-interface',     $rule['in_interface']);
+            if (!empty($rule['out_interface']))    $q->equal('out-interface',    $rule['out_interface']);
+            if (!empty($rule['comment']))          $q->equal('comment',          $rule['comment']);
+            if (!empty($rule['log']))              $q->equal('log',              'yes');
+            if (empty($rule['enabled']))           $q->equal('disabled',         'yes');
+
+            $this->client->query($q)->read();
+        }
+    }
+
+    /**
+     * Reemplaza todas las reglas de /ip/firewall/nat del router por $rules.
+     * Las reglas deben venir ordenadas por prioridad (campo 'priority' ascendente).
+     */
+    public function syncNatRules(array $rules): void
+    {
+        if (!$this->client) return;
+
+        $this->bulkRemoveAll('/ip/firewall/nat');
+
+        foreach ($rules as $rule) {
+            $q = new Query('/ip/firewall/nat/add');
+            $q->equal('chain',  $rule['chain']);
+            $q->equal('action', $rule['action']);
+
+            if (($rule['protocol'] ?? 'any') !== 'any') {
+                $q->equal('protocol', $rule['protocol']);
+            }
+            if (!empty($rule['src_address']))      $q->equal('src-address',      $rule['src_address']);
+            if (!empty($rule['src_address_list'])) $q->equal('src-address-list', $rule['src_address_list']);
+            if (!empty($rule['dst_address']))      $q->equal('dst-address',      $rule['dst_address']);
+            if (!empty($rule['src_port']))         $q->equal('src-port',         $rule['src_port']);
+            if (!empty($rule['dst_port']))         $q->equal('dst-port',         $rule['dst_port']);
+            if (!empty($rule['out_interface']))    $q->equal('out-interface',    $rule['out_interface']);
+            if (!empty($rule['to_addresses']))     $q->equal('to-addresses',     $rule['to_addresses']);
+            if (!empty($rule['to_ports']))         $q->equal('to-ports',         $rule['to_ports']);
+            if (!empty($rule['comment']))          $q->equal('comment',          $rule['comment']);
+            if (!empty($rule['log']))              $q->equal('log',              'yes');
+            if (empty($rule['enabled']))           $q->equal('disabled',         'yes');
+
+            $this->client->query($q)->read();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+
     public function removeIpFromAddressList(string $ip, string $listName): array
     {
         if (!$this->client) {

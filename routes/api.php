@@ -20,6 +20,8 @@ use App\Http\Controllers\Admin\InvoiceController as AdminInvoiceController;
 use App\Http\Controllers\Admin\TransactionController as AdminTransactionController;
 use App\Http\Controllers\Admin\InternetServiceProviderController;
 use App\Http\Controllers\Admin\IspConnectionController;
+use App\Http\Controllers\Admin\MikrotikRouterController;
+use App\Http\Controllers\FirewallController;
 
 Route::get('/user', [AdminEmployeeController::class, 'profile'])->middleware('auth:sanctum');
 
@@ -54,6 +56,13 @@ Route::get('/plans', [AdminPlanController::class, 'index']); // Nueva ruta para 
 Route::post('/planes', [AdminPlanController::class, 'store']);
 Route::put('/planes/{id}', [AdminPlanController::class, 'update']);
 Route::put('/planes/{id}/status', [AdminPlanController::class, 'setStatus']);
+
+// Routers MikroTik
+Route::get('/mikrotik-routers', [MikrotikRouterController::class, 'index']);
+Route::get('/mikrotik-routers/{id}', [MikrotikRouterController::class, 'show']);
+Route::post('/mikrotik-routers', [MikrotikRouterController::class, 'store'])->middleware('super_admin');
+Route::put('/mikrotik-routers/{id}', [MikrotikRouterController::class, 'update'])->middleware('super_admin');
+Route::delete('/mikrotik-routers/{id}', [MikrotikRouterController::class, 'destroy'])->middleware('super_admin');
 
 // Proveedores de Internet (ISPs)
 Route::get('/isps', [InternetServiceProviderController::class, 'index']);
@@ -105,6 +114,18 @@ Route::prefix('mikrotik')->group(function () {
     Route::get('/client-plans', [MikroTikController::class, 'getClientPlans'])->middleware('auth:sanctum');
     Route::get('/ip/check', [MikroTikController::class, 'checkIp']);
     Route::post('/sync/queues/cleanup', [MikroTikController::class, 'syncQueuesCleanup'])->middleware(['auth:sanctum', 'throttle:2,1']);
+
+    // Firewall (requiere autenticación de empleado)
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::get('/firewall/snapshot',                          [FirewallController::class, 'snapshot']);
+        Route::post('/firewall/apply',                           [FirewallController::class, 'apply']);
+        Route::post('/firewall/validate',                        [FirewallController::class, 'validate']);
+        Route::get('/firewall/apply-logs',                       [FirewallController::class, 'applyLogs']);
+        Route::post('/firewall/apply-logs/{id}/rollback',        [FirewallController::class, 'rollback']);
+        Route::get('/firewall/router-status',                    [FirewallController::class, 'routerStatus']);
+        Route::post('/firewall/sync/from-router',                [FirewallController::class, 'syncFromRouter']);
+        Route::post('/firewall/sync/merge-from-router',          [FirewallController::class, 'mergeFromRouter']);
+    });
 });
 
 // Rutas para planes
