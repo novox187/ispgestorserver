@@ -17,6 +17,10 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
+        // CORS debe correr primero para responder los preflight OPTIONS
+        // antes de que cualquier otro middleware (auth, throttle) los rechace
+        $middleware->prepend(\Illuminate\Http\Middleware\HandleCors::class);
+
         $middleware->alias([
             'super_admin' => EnsureEmployeeSuperAdmin::class,
         ]);
