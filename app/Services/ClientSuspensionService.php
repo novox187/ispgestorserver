@@ -24,7 +24,7 @@ class ClientSuspensionService
      * @param  Client      $client     Cliente a suspender
      * @param  string      $reason     Razón descriptiva del corte
      * @param  int|null    $invoiceId  ID de la factura que originó el corte (si aplica)
-     * @return array{success: bool, already_suspended?: bool, mikrotik?: array, message?: string}
+     * @return array{success: bool, already_suspended?: bool, mikrotik?: array}
      */
     public function suspendClient(Client $client, string $reason, ?int $invoiceId = null): array
     {
@@ -34,7 +34,7 @@ class ClientSuspensionService
 
         $mkResult = ['skipped' => 'no_ip'];
 
-        // Intentar bloquear en MikroTik si el cliente tiene IP
+        // Intentar bloquear en MikroTik si el cliente tiene IP asignada
         if ($client->ip) {
             try {
                 $mkResult = $this->mikrotik->addIpToAddressList(
@@ -46,7 +46,7 @@ class ClientSuspensionService
                 if (!$mkResult['success'] && !($mkResult['already_exists'] ?? false)) {
                     Log::error("ClientSuspensionService: MikroTik falló para cliente {$client->id}.", [
                         'mikrotik_response' => $mkResult,
-                        'reason' => $reason,
+                        'reason'            => $reason,
                     ]);
                 }
             } catch (\Throwable $e) {
@@ -57,7 +57,7 @@ class ClientSuspensionService
             Log::warning("ClientSuspensionService: Cliente {$client->id} sin IP. Suspendido solo en BD.");
         }
 
-        // La suspensión en BD siempre se aplica aunque MikroTik haya fallado
+        // La suspensión en BD se aplica siempre, aunque MikroTik haya fallado
         DB::transaction(function () use ($client, $reason, $invoiceId, $mkResult) {
             $oldStatus = $client->service_status;
 
@@ -74,14 +74,14 @@ class ClientSuspensionService
                 'record_id'  => (string) $client->id,
                 'old_values' => ['service_status' => $oldStatus],
                 'new_values' => [
-                    'service_status'    => 'suspended',
-                    'ip'                => $client->ip,
-                    'reason'            => $reason,
-                    'invoice_id'        => $invoiceId,
-                    'mikrotik_list'     => 'morosos',
-                    'mikrotik_result'   => $mkResult,
-                    'executor'          => 'system_auto',
-                    'timestamp'         => now()->toIso8601String(),
+                    'service_status'  => 'suspended',
+                    'ip'              => $client->ip,
+                    'reason'          => $reason,
+                    'invoice_id'      => $invoiceId,
+                    'mikrotik_list'   => 'morosos',
+                    'mikrotik_result' => $mkResult,
+                    'executor'        => 'system_auto',
+                    'timestamp'       => now()->toIso8601String(),
                 ],
                 'user_id'    => null,
                 'ip_address' => '127.0.0.1',
@@ -96,11 +96,10 @@ class ClientSuspensionService
     /**
      * Reactivar el servicio de un cliente.
      *
-     * Remueve la IP de la lista 'morosos' en MikroTik y restaura el estado
-     * en la base de datos.
+     * Remueve la IP de la lista 'morosos' en MikroTik y restaura el estado en BD.
      *
-     * @param  Client  $client   Cliente a reactivar
-     * @param  string  $reason   Razón de la reactivación
+     * @param  Client  $client  Cliente a reactivar
+     * @param  string  $reason  Razón de la reactivación
      * @return array{success: bool, already_active?: bool, mikrotik?: array}
      */
     public function reactivateClient(Client $client, string $reason): array

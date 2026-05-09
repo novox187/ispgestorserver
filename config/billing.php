@@ -40,7 +40,7 @@ return [
     |--------------------------------------------------------------------------
     */
     'queue' => [
-        'suspensions'  => env('BILLING_QUEUE_SUSPENSIONS', 'suspensions'),
+        'suspensions'   => env('BILLING_QUEUE_SUSPENSIONS', 'suspensions'),
         'reactivations' => env('BILLING_QUEUE_REACTIVATIONS', 'reactivations'),
     ],
 ];

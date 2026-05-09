@@ -33,7 +33,10 @@ class ProcessClientSuspension implements ShouldQueue
             ->where('status', Invoice::STATUS_FAILED)
             ->where('due_date', '<=', now()->subDays($graceDays)->toDateString())
             ->whereHas('client', function ($q) {
-                $q->whereNotIn('service_status', ['suspended', 'SUSPENDED', 'SUSPENDIDO', 'cancelled', 'CANCELLED']);
+                $q->whereNotIn('service_status', [
+                    'suspended', 'SUSPENDED', 'SUSPENDIDO',
+                    'cancelled', 'CANCELLED',
+                ]);
             })
             ->get();
 
@@ -42,11 +45,11 @@ class ProcessClientSuspension implements ShouldQueue
             return;
         }
 
-        Log::info("ProcessClientSuspension: {$overdueInvoices->count()} candidato(s) con {$graceDays} días de gracia cumplidos.");
+        Log::info("ProcessClientSuspension: {$overdueInvoices->count()} candidato(s) con {$graceDays} día(s) de gracia cumplidos.");
 
-        $suspended  = 0;
-        $recovered  = 0;
-        $errors     = 0;
+        $suspended = 0;
+        $recovered = 0;
+        $errors    = 0;
 
         foreach ($overdueInvoices as $invoice) {
             $client = $invoice->client;
@@ -67,7 +70,7 @@ class ProcessClientSuspension implements ShouldQueue
             try {
                 $result = $suspension->suspendClient(
                     $client,
-                    "Factura {$invoice->invoice_number} vencida con {$graceDays} días de gracia",
+                    "Factura {$invoice->invoice_number} vencida con {$graceDays} día(s) de gracia",
                     $invoice->id
                 );
 

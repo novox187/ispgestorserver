@@ -8,7 +8,7 @@ use Illuminate\Console\Command;
 
 class CheckAndReactivate extends Command
 {
-    protected $signature   = 'billing:reactivate
+    protected $signature = 'billing:reactivate
                                 {--client-id= : Procesar solo un cliente específico}
                                 {--dry-run    : Mostrar candidatos sin despachar jobs}';
 
@@ -28,7 +28,7 @@ class CheckAndReactivate extends Command
         $candidates = $query->get();
 
         if ($candidates->isEmpty()) {
-            $this->info('No hay clientes suspendidos con facturas pendientes.');
+            $this->info('No hay clientes suspendidos para revisar.');
             return Command::SUCCESS;
         }
 
@@ -48,7 +48,7 @@ class CheckAndReactivate extends Command
         }
 
         if (!$this->option('dry-run')) {
-            $this->info("Jobs despachados: {$dispatched}");
+            $this->info("Jobs de reactivación despachados: {$dispatched}");
         }
 
         return Command::SUCCESS;

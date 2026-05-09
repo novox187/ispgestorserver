@@ -27,7 +27,7 @@ class ProcessAutoReactivation implements ShouldQueue
 
     public function handle(ClientSuspensionService $suspension, AutoBillingService $billing): void
     {
-        // Recargar el estado más reciente del cliente desde la BD
+        // Recargar estado más reciente desde la BD
         $this->client->refresh();
 
         if (!in_array(strtoupper($this->client->service_status), ['SUSPENDED', 'SUSPENDIDO'])) {
