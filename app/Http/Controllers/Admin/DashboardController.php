@@ -6,8 +6,6 @@ use App\Http\Controllers\Controller;
 use App\Models\Client;
 use App\Models\Invoice;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-
 use App\Services\MikroTikService;
 use App\Services\IspCapacityService;
 use Illuminate\Support\Facades\Log;
@@ -17,6 +15,33 @@ class DashboardController extends Controller
     public function fullStats(MikroTikService $mikroTikService, IspCapacityService $capacity)
     {
         $capacitySnapshot = $capacity->getCapacitySnapshot();
+
+        // Estadísticas de clientes (queries sobre columnas indexadas)
+        $clientStats = [
+            'active'    => Client::active()->count(),
+            'suspended' => Client::suspended()->count(),
+            'limited'   => Client::limited()->count(),
+            'total'     => Client::count(),
+        ];
+
+        // Resumen de facturas: mes actual + acumulado pendiente
+        $now = now();
+        $monthlyRow = Invoice::whereYear('issue_date', $now->year)
+            ->whereMonth('issue_date', $now->month)
+            ->whereNull('deleted_at')
+            ->selectRaw(
+                'SUM(total_amount) as invoiced_this_month,
+                 SUM(CASE WHEN status = "paid" THEN total_amount ELSE 0 END) as paid_this_month'
+            )
+            ->first();
+
+        $invoiceSummary = [
+            'pending_count'        => Invoice::pending()->count(),
+            'pending_amount'       => (float) Invoice::pending()->sum('total_amount'),
+            'overdue_count'        => Invoice::overdue()->count(),
+            'invoiced_this_month'  => (float) ($monthlyRow->invoiced_this_month ?? 0),
+            'paid_this_month'      => (float) ($monthlyRow->paid_this_month ?? 0),
+        ];
 
         $mikrotikData = [
             'online' => false,
@@ -34,8 +59,10 @@ class DashboardController extends Controller
             ];
 
             return response()->json([
-                'mikrotik' => $mikrotikData,
-                'capacity' => $capacitySnapshot,
+                'mikrotik'         => $mikrotikData,
+                'capacity'         => $capacitySnapshot,
+                'clients'          => $clientStats,
+                'invoices_summary' => $invoiceSummary,
             ]);
         }
 
@@ -73,8 +100,10 @@ class DashboardController extends Controller
         }
 
         return response()->json([
-            'mikrotik' => $mikrotikData,
-            'capacity' => $capacitySnapshot,
+            'mikrotik'         => $mikrotikData,
+            'capacity'         => $capacitySnapshot,
+            'clients'          => $clientStats,
+            'invoices_summary' => $invoiceSummary,
         ]);
     }
 
@@ -125,17 +154,14 @@ class DashboardController extends Controller
 
     public function chart(Request $request)
     {
-        // Default to current year
-        $year = $request->input('year', date('Y'));
-        
-        // Get monthly data for the year
-        // We want 3 series:
-        // 1. Total Invoiced (total_amount of all invoices issued that month)
-        // 2. Total Collected (total_amount of paid invoices paid that month - or issued that month and paid)
-        //    Let's go with "issued that month and paid" to keep it simple with issue_date, 
-        //    OR "paid_at" month. Usually financial charts track cash flow (paid_at) vs sales (issue_date).
-        //    Let's stick to sales/invoiced by issue_date for now.
-        // 3. Pending Debt (total_amount of pending/failed invoices issued that month)
+        // Default to the most recent year that has invoice data, falling back to current year.
+        // This prevents the chart from appearing empty when existing invoices belong to a
+        // prior year (e.g., the system was set up in 2025 but the current year is 2026).
+        $defaultYear = Invoice::selectRaw('YEAR(issue_date) as year')
+            ->orderByDesc('year')
+            ->value('year') ?? (int) date('Y');
+
+        $year = (int) $request->input('year', $defaultYear);
 
         $data = Invoice::selectRaw(
                 'MONTH(issue_date) as month,
@@ -144,7 +170,6 @@ class DashboardController extends Controller
                  SUM(CASE WHEN status IN ("pending", "failed") THEN total_amount ELSE 0 END) as total_pending'
             )
             ->whereYear('issue_date', $year)
-            ->whereNull('deleted_at') // If using SoftDeletes
             ->groupBy('month')
             ->orderBy('month')
             ->get();
@@ -166,6 +191,7 @@ class DashboardController extends Controller
         }
 
         return response()->json([
+            'year' => $year,
             'labels' => $months,
             'datasets' => [
                 [
