@@ -1,10 +1,13 @@
 <?php
 
+use App\Jobs\GenerateMonthlyInvoices;
+use App\Jobs\ProcessClientSuspension;
+use App\Jobs\SyncMikroTikQueues;
+use App\Http\Middleware\EnsureEmployeeSuperAdmin;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
-use Illuminate\Console\Scheduling\Schedule;
-use App\Http\Middleware\EnsureEmployeeSuperAdmin;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -22,15 +25,40 @@ return Application::configure(basePath: dirname(__DIR__))
         //
     })
     ->withSchedule(function (Schedule $schedule) {
-        // Procesar facturación automática diariamente a las 2 AM
-        $schedule->command('billing:process')
-                 ->dailyAt('02:00')
-                 ->timezone('America/New_York') // Ajusta tu zona horaria
+        $tz    = config('billing.timezone');
+        $sched = config('billing.schedule');
+
+        // Día configurable del mes — generación de facturas mensuales
+        $schedule->job(new GenerateMonthlyInvoices())
+                 ->monthlyOn($sched['generate_invoices_day'], $sched['generate_invoices_time'])
+                 ->timezone($tz)
+                 ->withoutOverlapping()
+                 ->appendOutputTo(storage_path('logs/invoices.log'));
+
+        // Cobro automático diario — intenta pagar facturas próximas a vencer
+        $schedule->command('billing:process --process-payments')
+                 ->dailyAt($sched['process_payments_time'])
+                 ->timezone($tz)
+                 ->withoutOverlapping()
                  ->appendOutputTo(storage_path('logs/billing.log'));
 
-        // También ejecutar el día 1 de cada mes como respaldo
-        $schedule->command('billing:process')
-                 ->monthlyOn(1, '03:00')
-                 ->appendOutputTo(storage_path('logs/billing-monthly.log'));
+        // Corte automático de morosos (con días de gracia configurables)
+        $schedule->job(new ProcessClientSuspension(), config('billing.queue.suspensions'))
+                 ->dailyAt($sched['auto_suspend_time'])
+                 ->timezone($tz)
+                 ->withoutOverlapping()
+                 ->appendOutputTo(storage_path('logs/suspensions.log'));
+
+        // Reactivación automática de clientes suspendidos con saldo suficiente
+        $schedule->command('billing:reactivate')
+                 ->dailyAt($sched['auto_reactivate_time'])
+                 ->timezone($tz)
+                 ->withoutOverlapping();
+
+        // Sincronización de colas MikroTik (dos veces al día)
+        $schedule->job(new SyncMikroTikQueues(), 'default')
+                 ->twiceDaily(...$sched['mikrotik_sync_hours'])
+                 ->timezone($tz)
+                 ->withoutOverlapping();
     })
     ->create();

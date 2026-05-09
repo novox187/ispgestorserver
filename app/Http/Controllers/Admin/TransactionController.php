@@ -3,16 +3,17 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\ProcessAutoReactivation;
+use App\Models\Audit;
+use App\Models\Client;
 use App\Models\Transaction;
 use App\Models\Wallet;
-use App\Models\Client;
-use App\Models\Audit;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class TransactionController extends Controller
 {
@@ -91,6 +92,12 @@ class TransactionController extends Controller
             ]);
 
             DB::commit();
+
+            // Si el cliente está suspendido, intentar reactivarlo automáticamente
+            if (in_array(strtoupper($client->service_status), ['SUSPENDED', 'SUSPENDIDO'])) {
+                ProcessAutoReactivation::dispatch($client)
+                    ->onQueue(config('billing.queue.reactivations'));
+            }
 
             $transaction->load(['wallet', 'wallet.client']);
 

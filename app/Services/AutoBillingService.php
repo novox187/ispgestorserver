@@ -117,7 +117,7 @@ class AutoBillingService
     /**
      * Procesar pago de una factura individual
      */
-    private function processInvoicePayment(Invoice $invoice)
+    public function processInvoicePayment(Invoice $invoice)
     {
         return DB::transaction(function () use ($invoice) {
             $client = $invoice->client;
