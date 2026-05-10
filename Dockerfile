@@ -68,7 +68,7 @@ RUN chown -R www-data:www-data /var/www/html \
     && chmod -R 755 /var/www/html/storage \
     && chmod -R 755 /var/www/html/bootstrap/cache
 
-EXPOSE 80
+EXPOSE 80 8080
 
 # Supervisor como punto de entrada — gestiona nginx, php-fpm, workers y scheduler
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
