@@ -14,7 +14,7 @@ return [
 
     'paths' => ['*'],
 
-    'allowed_origins' => ['*'],
+    'allowed_origins' => array_filter(explode(',', env('CORS_ALLOWED_ORIGINS', '*'))),
 
     'allowed_origins_patterns' => [],
 
@@ -22,7 +22,7 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'supports_credentials' => false,
+    'supports_credentials' => env('CORS_SUPPORTS_CREDENTIALS', false),
 
     'exposed_headers' => [],
 
