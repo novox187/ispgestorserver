@@ -33,7 +33,7 @@ class MessageController extends Controller
         $messages = Message::whereHas('ticket', function ($query) use ($user) {
                 $query->where('client_id', $user->id);
             })
-            ->with(['attachments', 'ticket', 'employee'])
+            ->with(['attachments', 'ticket', 'employee', 'client'])
             ->orderBy('created_at', 'desc')
             ->paginate($perPage, ['*'], 'page', $page);
 
@@ -41,7 +41,9 @@ class MessageController extends Controller
             return [
                 'id' => $message->id,
                 'text' => $message->message,
-                'sender' => $message->employee_id ? 'agent' : 'user',
+                'sender' => $message->employee_id ? 'agent' : ($message->event_type ? 'system' : 'user'),
+                'event_type' => $message->event_type,
+                'metadata' => $message->metadata,
                 'timestamp' => $message->created_at,
                 'formatted_datetime' => $message->created_at->setTimezone('Europe/Moscow')->format('Y-m-d H:i:s'),
                 'ticket_id' => $message->ticket_id,
@@ -56,15 +58,43 @@ class MessageController extends Controller
             ];
         });
 
+        $activeTicket = \App\Models\Ticket::where('client_id', $user->id)
+            ->latest()
+            ->first();
+
+        // Cargar eventos del cliente (wallet_funded, etc.) — fuente independiente de tickets
+        $clientEvents = \App\Models\ClientEvent::where('client_id', $user->id)
+            ->orderBy('created_at', 'asc')
+            ->get()
+            ->map(function ($e) {
+                return [
+                    'id'                 => 'evt-' . $e->id,
+                    'event_type'         => $e->event_type,
+                    'text'               => $e->data['text'] ?? '',
+                    'metadata'           => $e->data,
+                    'sender'             => 'system',
+                    'timestamp'          => $e->created_at->toIso8601String(),
+                    'formatted_datetime' => $e->created_at->format('Y-m-d H:i:s'),
+                ];
+            });
+
         return response()->json([
-            'messages' => $formattedMessages,
+            'messages'  => $formattedMessages,
+            'events'    => $clientEvents,
+            'client_id' => $user->id,
+            'ticket'    => $activeTicket ? [
+                'id'     => $activeTicket->id,
+                'status' => $activeTicket->status,
+                'rating' => $activeTicket->rating,
+                'review' => $activeTicket->review,
+            ] : null,
             'pagination' => [
                 'current_page' => $messages->currentPage(),
                 'last_page' => $messages->lastPage(),
                 'per_page' => $messages->perPage(),
                 'total' => $messages->total(),
                 'has_more' => $messages->hasMorePages(),
-            ]
+            ],
         ]);
     }
 

@@ -2,8 +2,9 @@
 
 namespace App\Services;
 
-use App\Models\Ticket;
+use App\Events\MessageSent;
 use App\Models\Message;
+use App\Models\Ticket;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -11,94 +12,129 @@ use Cloudinary\Cloudinary;
 
 class ChatService
 {
-    /**
-     * Upload attachment to Cloudinary and return metadata
-     */
     protected function uploadAttachment(UploadedFile $file): array
     {
-        Log::info('Uploading attachment', ['file' => $file->getClientOriginalName()]);
+        $cloudinary = new Cloudinary(env('CLOUDINARY_URL'));
+        $result = $cloudinary->uploadApi()->upload($file->getRealPath(), [
+            'folder'        => 'chat_attachments',
+            'resource_type' => 'auto',
+        ]);
 
-        try {
-            // Upload to Cloudinary
-            $cloudinary = new Cloudinary(env('CLOUDINARY_URL'));
-            $result = $cloudinary->uploadApi()->upload($file->getRealPath(), [
-                'folder' => 'chat_attachments',
-                'resource_type' => 'auto'
-            ]);
-
-            Log::info('Attachment uploaded successfully', ['public_id' => $result['public_id']]);
-
-            return [
-                'cloudinary_public_id' => $result['public_id'],
-                'file_url' => $result['secure_url'],
-                'original_name' => $file->getClientOriginalName(),
-                'type' => $file->getMimeType(),
-                'size' => $file->getSize(),
-            ];
-        } catch (\Exception $e) {
-            Log::error('Failed to upload attachment to Cloudinary', [
-                'file' => $file->getClientOriginalName(),
-                'error' => $e->getMessage()
-            ]);
-            throw $e;
-        }
+        return [
+            'cloudinary_public_id' => $result['public_id'],
+            'file_url'             => $result['secure_url'],
+            'original_name'        => $file->getClientOriginalName(),
+            'type'                 => $file->getMimeType(),
+            'size'                 => $file->getSize(),
+        ];
     }
 
     /**
      * Busca el ticket abierto del cliente o crea uno nuevo.
-     * Crea el mensaje y actualiza el estado del ticket.
+     * Crea el mensaje, sube adjuntos y emite el evento WebSocket.
      */
     public function createMessage(array $data): Message
     {
-        Log::info('Starting createMessage', ['data' => $data]);
-
         return DB::transaction(function () use ($data) {
-
             $clientId = $data['client_id'];
-            
-            // 1. BUSCAR UN TICKET ABIERTO (estados: 'new' o 'open')
+
             $ticket = Ticket::where('client_id', $clientId)
-                ->whereNotIn('status', ['closed', 'resolved']) // Excluye estados finales
+                ->where('status', '!=', 'closed')
                 ->latest()
                 ->first();
-                
-            // 2. CREAR UN NUEVO TICKET si no se encontró uno abierto
+
             if (!$ticket) {
                 $ticket = Ticket::create([
-                    'client_id' => $clientId,
-                    'subject' => substr($data['message'] ?? 'Nuevo Ticket', 0, 100), 
-                    'status' => 'new',
+                    'client_id'       => $clientId,
+                    'subject'         => substr($data['message'] ?? 'Nuevo Ticket', 0, 100),
+                    'status'          => 'open',
                     'last_message_at' => now(),
-                    'employee_id' => null, // Sin asignar inicialmente
+                    'employee_id'     => null,
                 ]);
             }
-            
-            // 3. Crear el Mensaje y asignarlo al ticket
+
             $message = $ticket->messages()->create([
-                'message' => $data['message'],
-                'client_id' => $clientId,
+                'message'    => $data['message'] ?? '',
+                'client_id'  => $clientId,
                 'employee_id' => null,
-                'created_at' => now()
             ]);
 
-            // 4. Procesar y adjuntar archivos
-            if (isset($data['attachments'])) {
+            if (!empty($data['attachments'])) {
                 $attachmentsData = collect($data['attachments'])
-                    ->map(fn(UploadedFile $file) => $this->uploadAttachment($file))
+                    ->map(fn (UploadedFile $file) => $this->uploadAttachment($file))
                     ->all();
                 $message->attachments()->createMany($attachmentsData);
             }
 
-            // 5. Actualizar Ticket y estado
-            if (in_array($ticket->status, ['closed', 'resolved'])) {
-                $ticket->status = 'reopened'; // Reabrir si el cliente responde a un ticket cerrado
-            } elseif ($ticket->status === 'new') {
-                $ticket->status = 'open'; // Mover de nuevo a 'open'
+            if ($ticket->status === 'closed') {
+                $ticket->status = 'open';
             }
+            $ticket->last_message_at = now();
             $ticket->save();
 
-            // 6. Retornar el mensaje completo
-            return $message->load('attachments'); 
+            $message->load('attachments');
+
+            broadcast(new MessageSent($message, 'user'))->toOthers();
+
+            return $message;
         });
+    }
+
+    /**
+     * El empleado responde en un ticket existente.
+     */
+    public function replyAsEmployee(Ticket $ticket, int $employeeId, string $messageText, array $attachments = []): Message
+    {
+        return DB::transaction(function () use ($ticket, $employeeId, $messageText, $attachments) {
+            $message = $ticket->messages()->create([
+                'message'     => $messageText,
+                'employee_id' => $employeeId,
+                'client_id'   => null,
+            ]);
+
+            if (!empty($attachments)) {
+                $attachmentsData = collect($attachments)
+                    ->map(fn (UploadedFile $file) => $this->uploadAttachment($file))
+                    ->all();
+                $message->attachments()->createMany($attachmentsData);
+            }
+
+            if ($ticket->employee_id === null) {
+                $ticket->employee_id = $employeeId;
+            }
+            $ticket->last_message_at = now();
+            $ticket->save();
+
+            $message->load(['attachments', 'employee']);
+
+            broadcast(new MessageSent($message, 'agent'));
+
+            return $message;
+        });
+    }
+
+    /**
+     * Crea un evento del sistema (p. ej. wallet_funded) desacoplado del sistema de tickets.
+     * Persiste en client_events y transmite por private-client.{clientId}.
+     */
+    public function createSystemEvent(int $clientId, string $eventType, string $displayText, array $metadata = []): ?\App\Models\ClientEvent
+    {
+        try {
+            $event = \App\Models\ClientEvent::create([
+                'client_id'  => $clientId,
+                'event_type' => $eventType,
+                'data'       => array_merge($metadata, ['text' => $displayText]),
+            ]);
+
+            broadcast(new \App\Events\ClientEventBroadcast($event));
+
+            return $event;
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error("ChatService::createSystemEvent failed: {$e->getMessage()}", [
+                'client_id'  => $clientId,
+                'event_type' => $eventType,
+            ]);
+            return null;
+        }
     }
 }
