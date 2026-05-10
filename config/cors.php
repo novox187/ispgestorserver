@@ -12,7 +12,7 @@ return [
     |
     */
 
-    'paths' => ['api/*', 'sanctum/csrf-cookie', 'reverb/*'],
+    'paths' => ['*'],
 
     'allowed_origins' => ['*'],
 
