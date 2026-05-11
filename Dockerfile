@@ -66,10 +66,11 @@ WORKDIR /var/www/html
 
 COPY --from=composer-stage /app .
 
-# Permisos correctos para Laravel
+# Permisos correctos para Laravel y directorios temporales de nginx
 RUN chown -R www-data:www-data /var/www/html \
     && chmod -R 755 /var/www/html/storage \
-    && chmod -R 755 /var/www/html/bootstrap/cache
+    && chmod -R 755 /var/www/html/bootstrap/cache \
+    && chown -R www-data:www-data /var/lib/nginx/
 
 EXPOSE 80 8080
 
