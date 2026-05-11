@@ -9,6 +9,7 @@ use App\Models\Client;
 use App\Models\Transaction;
 use App\Models\Wallet;
 use App\Services\ChatService;
+use Cloudinary\Cloudinary;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -44,6 +45,32 @@ class TransactionController extends Controller
             ], 404);
         }
 
+        // ── Upload del comprobante ANTES de la transacción DB ─────────────────
+        // Aísla los fallos de red/Cloudinary del flujo financiero y evita que
+        // un timeout externo deje la transacción abierta o provoque un 500 sin CORS.
+        $imagePublicId = null;
+        $imageUrl      = null;
+        if ($request->hasFile('image') && $request->file('image')->isValid()) {
+            try {
+                $cloudinary   = new Cloudinary(env('CLOUDINARY_URL'));
+                $uploadResult = $cloudinary->uploadApi()->upload(
+                    $request->file('image')->getRealPath(),
+                    ['folder' => 'transactions']
+                );
+                $imagePublicId = $uploadResult['public_id'];
+                $imageUrl      = $uploadResult['secure_url'];
+            } catch (\Exception $e) {
+                Log::error('Cloudinary upload failed in addFunds: ' . $e->getMessage(), [
+                    'client_id' => $id,
+                ]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Error al subir el comprobante de pago. Intente nuevamente.',
+                ], 422);
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         DB::beginTransaction();
 
         try {
@@ -54,18 +81,16 @@ class TransactionController extends Controller
             $metadata['admin_employee_name'] = $employee?->nombre ?? $employee?->name ?? 'Admin';
 
             $transaction = Transaction::create([
-                'wallet_id'   => $wallet->id,
-                'type'        => Transaction::TYPE_DEPOSIT,
-                'amount'      => $validated['amount'],
-                'description' => $validated['description'] ?? 'Recarga administrativa',
-                'reference'   => $reference,
-                'status'      => Transaction::STATUS_COMPLETED,
-                'metadata'    => $metadata,
+                'wallet_id'      => $wallet->id,
+                'type'           => Transaction::TYPE_DEPOSIT,
+                'amount'         => $validated['amount'],
+                'description'    => $validated['description'] ?? 'Recarga administrativa',
+                'reference'      => $reference,
+                'status'         => Transaction::STATUS_COMPLETED,
+                'metadata'       => $metadata,
+                'image_public_id' => $imagePublicId,
+                'image_url'      => $imageUrl,
             ]);
-
-            if ($request->hasFile('image') && $request->file('image')->isValid()) {
-                $transaction->uploadImage($request->file('image'));
-            }
 
             $wallet->increment('balance', $transaction->amount);
 
@@ -89,38 +114,17 @@ class TransactionController extends Controller
 
             DB::commit();
 
-            // ── Evento de billetera en el chat del cliente ────────────────────
-            $this->chatService->createSystemEvent(
-                clientId:    $client->id,
-                eventType:   'wallet_funded',
-                displayText: "Recarga de billetera: $" . number_format($transaction->amount, 2),
-                metadata: [
-                    'amount'      => (float) $transaction->amount,
-                    'currency'    => 'USD',
-                    'receipt_url' => $transaction->image_url,
-                    'actor_type'  => 'employee',
-                    'actor_name'  => $employee?->nombre ?? 'Administrador',
-                    'description' => $transaction->description,
-                    'reference'   => $transaction->reference,
-                ],
-            );
-            // ─────────────────────────────────────────────────────────────────
-
-            if (in_array(strtoupper($client->service_status), ['SUSPENDED', 'SUSPENDIDO'])) {
-                ProcessAutoReactivation::dispatch($client)
-                    ->onQueue(config('billing.queue.reactivations'));
-            }
-
-            $transaction->load(['wallet', 'wallet.client']);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Fondos agregados exitosamente.',
-                'data'    => $transaction,
-            ], 201);
-
         } catch (\Exception $e) {
             DB::rollBack();
+
+            // Si el DB falla después de subir la imagen, eliminarla de Cloudinary
+            if ($imagePublicId) {
+                try {
+                    (new Cloudinary(env('CLOUDINARY_URL')))->uploadApi()->destroy($imagePublicId);
+                } catch (\Exception $deleteException) {
+                    Log::warning('No se pudo eliminar imagen de Cloudinary tras fallo de DB: ' . $deleteException->getMessage());
+                }
+            }
 
             Log::error('Error al agregar fondos (Admin): ' . $e->getMessage(), [
                 'client_id' => $id,
@@ -134,6 +138,36 @@ class TransactionController extends Controller
                 'error'   => $e->getMessage(),
             ], 500);
         }
+
+        // ── Efectos secundarios post-commit (no bloquean la respuesta) ────────
+        $this->chatService->createSystemEvent(
+            clientId:    $client->id,
+            eventType:   'wallet_funded',
+            displayText: "Recarga de billetera: $" . number_format($transaction->amount, 2),
+            metadata: [
+                'amount'      => (float) $transaction->amount,
+                'currency'    => 'USD',
+                'receipt_url' => $transaction->image_url,
+                'actor_type'  => 'employee',
+                'actor_name'  => $employee?->nombre ?? 'Administrador',
+                'description' => $transaction->description,
+                'reference'   => $transaction->reference,
+            ],
+        );
+
+        if (in_array(strtoupper($client->service_status), ['SUSPENDED', 'SUSPENDIDO'])) {
+            ProcessAutoReactivation::dispatch($client)
+                ->onQueue(config('billing.queue.reactivations'));
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
+        $transaction->load(['wallet', 'wallet.client']);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Fondos agregados exitosamente.',
+            'data'    => $transaction,
+        ], 201);
     }
 
     private function generateUniqueReference(): string

@@ -27,7 +27,27 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
-        //
+        // Garantiza que TODAS las respuestas de error incluyan cabeceras CORS,
+        // incluso cuando una excepción escapa al middleware HandleCors (errores fatales,
+        // timeouts de PHP, fallos en el handler de excepciones, etc.).
+        $exceptions->respond(function (
+            \Symfony\Component\HttpFoundation\Response $response,
+            \Throwable $e,
+            \Illuminate\Http\Request $request
+        ) {
+            $origin = $request->header('Origin');
+            if (!$origin) {
+                return $response;
+            }
+            $allowed = array_filter(explode(',', env('CORS_ALLOWED_ORIGINS', '*')));
+            if (in_array('*', $allowed) || in_array($origin, $allowed)) {
+                $response->headers->set('Access-Control-Allow-Origin', $origin);
+                if (env('CORS_SUPPORTS_CREDENTIALS', false)) {
+                    $response->headers->set('Access-Control-Allow-Credentials', 'true');
+                }
+            }
+            return $response;
+        });
     })
     ->withSchedule(function (Schedule $schedule) {
         $tz    = config('billing.timezone');
