@@ -39,10 +39,10 @@ return Application::configure(basePath: dirname(__DIR__))
             if (!$origin) {
                 return $response;
             }
-            $allowed = array_filter(explode(',', env('CORS_ALLOWED_ORIGINS', '*')));
+            $allowed = config('cors.allowed_origins', ['*']);
             if (in_array('*', $allowed) || in_array($origin, $allowed)) {
                 $response->headers->set('Access-Control-Allow-Origin', $origin);
-                if (env('CORS_SUPPORTS_CREDENTIALS', false)) {
+                if (config('cors.supports_credentials', false)) {
                     $response->headers->set('Access-Control-Allow-Credentials', 'true');
                 }
             }

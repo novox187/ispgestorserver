@@ -114,14 +114,14 @@ class TransactionController extends Controller
 
             DB::commit();
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             DB::rollBack();
 
             // Si el DB falla después de subir la imagen, eliminarla de Cloudinary
             if ($imagePublicId) {
                 try {
                     (new Cloudinary(env('CLOUDINARY_URL')))->uploadApi()->destroy($imagePublicId);
-                } catch (\Exception $deleteException) {
+                } catch (\Throwable $deleteException) {
                     Log::warning('No se pudo eliminar imagen de Cloudinary tras fallo de DB: ' . $deleteException->getMessage());
                 }
             }
