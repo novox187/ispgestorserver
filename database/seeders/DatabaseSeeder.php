@@ -36,6 +36,9 @@ class DatabaseSeeder extends Seeder
             
             // 6. Tickets de soporte
             SupportSeeder::class,
+
+            // 7. Configuraciones del sistema
+            SystemSettingsSeeder::class,
         ]);
 
         $this->command->info('¡Base de datos poblada completamente!');

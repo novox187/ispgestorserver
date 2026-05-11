@@ -5,7 +5,9 @@ namespace App\Services;
 use App\Models\Client;
 use App\Models\Invoice;
 use App\Models\Wallet;
+use App\Services\SettingService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class AutoBillingService
 {
@@ -14,6 +16,21 @@ class AutoBillingService
      */
     public function generateMonthlyInvoices()
     {
+        $settingService = app(SettingService::class);
+
+        // Build the snapshot once and reuse it for all invoices in this run.
+        // If required settings are missing, abort the entire batch immediately.
+        try {
+            $snapshot = $settingService->buildInvoiceSnapshot();
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            Log::channel('billing')->error('Generación mensual abortada: faltan configuraciones', [
+                'errors' => $e->errors(),
+            ]);
+            return [];
+        }
+
+        $taxRate = $settingService->taxRateFromSnapshot($snapshot);
+
         $clientsWithPlans = Client::whereHas('clientPlans', function ($query) {
             $query->where('status', 'active');
         })
@@ -24,7 +41,7 @@ class AutoBillingService
 
         foreach ($clientsWithPlans as $client) {
             foreach ($client->clientPlans as $clientPlan) {
-                $invoice = $this->createMonthlyInvoice($client, $clientPlan);
+                $invoice = $this->createMonthlyInvoice($client, $clientPlan, $snapshot, $taxRate);
                 if ($invoice) {
                     $generatedInvoices[] = $invoice;
                 }
@@ -37,35 +54,40 @@ class AutoBillingService
     /**
      * Crear factura mensual para un cliente
      */
-    private function createMonthlyInvoice(Client $client, $clientPlan): ?Invoice
+    private function createMonthlyInvoice(Client $client, $clientPlan, array $snapshot, float $taxRate): ?Invoice
     {
         // Verificar si ya existe una factura para este mes
-        $existingInvoice = Invoice::where('client_id', $client->id)->where('client_plan_id', $clientPlan->id)->whereYear('issue_date', now()->year)->whereMonth('issue_date', now()->month)->first();
+        $existingInvoice = Invoice::where('client_id', $client->id)
+            ->where('client_plan_id', $clientPlan->id)
+            ->whereYear('issue_date', now()->year)
+            ->whereMonth('issue_date', now()->month)
+            ->first();
 
         if ($existingInvoice) {
             return null;
         }
 
-        $amount = $clientPlan->current_price ?? $clientPlan->plan->monthly_price;
-        $taxAmount = $amount * 0.15; // 15% de impuestos
-        $totalAmount = $amount + $taxAmount;
+        $amount      = (float) ($clientPlan->current_price ?? $clientPlan->plan->monthly_price);
+        $taxAmount   = round($amount * $taxRate, 2);
+        $totalAmount = round($amount + $taxAmount, 2);
 
         return Invoice::create([
-            'client_id' => $client->id,
-            'client_plan_id' => $clientPlan->id,
-            'invoice_number' => Invoice::generateInvoiceNumber(),
-            'issue_date' => now(),
-            'due_date' => now()->addDays(15),
-            'amount' => $amount,
-            'tax_amount' => $taxAmount,
-            'total_amount' => $totalAmount,
-            'status' => Invoice::STATUS_PENDING,
-            'description' => "Factura mensual - {$clientPlan->plan->name}",
-            'metadata' => [
-                'billing_cycle' => 'monthly',
-                'plan_name' => $clientPlan->plan->name,
-                'download_speed' => $clientPlan->plan->download_speed,
-                'upload_speed' => $clientPlan->plan->upload_speed,
+            'client_id'              => $client->id,
+            'client_plan_id'         => $clientPlan->id,
+            'invoice_number'         => Invoice::generateInvoiceNumber(),
+            'issue_date'             => now(),
+            'due_date'               => now()->addDays(15),
+            'amount'                 => $amount,
+            'tax_amount'             => $taxAmount,
+            'total_amount'           => $totalAmount,
+            'status'                 => Invoice::STATUS_PENDING,
+            'description'            => "Factura mensual - {$clientPlan->plan->name}",
+            'configuration_snapshot' => $snapshot,
+            'metadata'               => [
+                'billing_cycle'   => 'monthly',
+                'plan_name'       => $clientPlan->plan->name,
+                'download_speed'  => $clientPlan->plan->download_speed,
+                'upload_speed'    => $clientPlan->plan->upload_speed,
             ],
         ]);
     }

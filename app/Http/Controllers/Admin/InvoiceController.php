@@ -10,24 +10,75 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Services\AutoBillingService;
+use App\Services\SettingService;
+use App\Services\InvoiceConfigValidator;
 
 class InvoiceController extends Controller
 {
     /**
-     * Generar facturas automáticas (mensuales)
-     * Utiliza el servicio AutoBillingService para revisar los planes de clientes
-     * activos y generar las facturas que correspondan según su ciclo de facturación.
-     * Se usa en el dashboard o panel de facturas para forzar la generación manual 
-     * de lo que normalmente correría por cron.
+     * Preflight: verify invoice configuration is complete before any billing operation.
+     * The frontend calls this before opening the create form or triggering auto-generation.
+     * Returns 200 {valid: true} or 422 {valid: false, missing, invalid, messages}.
      */
-    public function generateAuto(AutoBillingService $billingService)
+    public function configCheck(InvoiceConfigValidator $validator)
     {
+        $result = $validator->validate();
+
+        if ($result['valid']) {
+            return response()->json(['valid' => true]);
+        }
+
+        $employee = auth()->user();
+        Log::channel('billing')->warning('Intento de facturación bloqueado: configuración incompleta', [
+            'employee_id'   => $employee?->id,
+            'employee_name' => $employee?->name,
+            'missing'       => $result['missing'],
+            'invalid'       => $result['invalid'],
+            'timestamp'     => now()->toIso8601String(),
+        ]);
+
+        return response()->json([
+            'valid'    => false,
+            'missing'  => $result['missing'],
+            'invalid'  => $result['invalid'],
+            'messages' => $result['messages'],
+        ], 422);
+    }
+
+    /**
+     * Generar facturas automáticas (mensuales).
+     */
+    public function generateAuto(AutoBillingService $billingService, InvoiceConfigValidator $validator)
+    {
+        // Pre-validate before delegating to the billing service
+        $check = $validator->validate();
+        if (!$check['valid']) {
+            $employee = auth()->user();
+            Log::channel('billing')->warning('Generación automática bloqueada: configuración incompleta', [
+                'employee_id'   => $employee?->id,
+                'employee_name' => $employee?->name,
+                'missing'       => $check['missing'],
+                'invalid'       => $check['invalid'],
+                'timestamp'     => now()->toIso8601String(),
+            ]);
+
+            return response()->json([
+                'error'    => 'No es posible generar facturas. Debe configurar previamente los parámetros de facturación.',
+                'valid'    => false,
+                'missing'  => $check['missing'],
+                'invalid'  => $check['invalid'],
+                'messages' => $check['messages'],
+                'config_url' => '/configuraciones/facturacion',
+            ], 422);
+        }
+
         try {
             $invoices = $billingService->generateMonthlyInvoices();
             return response()->json([
-                'message' => 'Facturas generadas exitosamente',
-                'count' => count($invoices),
-                'invoices' => $invoices
+                'message'  => 'Facturas generadas exitosamente',
+                'count'    => count($invoices),
+                'invoices' => $invoices,
+                'tax_rate_used' => $invoices[0]->configuration_snapshot['tax_rate']['value'] ?? null,
             ], 200);
         } catch (\Exception $e) {
             return response()->json(['error' => 'Error al generar facturas: ' . $e->getMessage()], 500);
@@ -50,20 +101,28 @@ class InvoiceController extends Controller
     /**
      * Crear una nueva factura
      */
-    public function store(StoreInvoiceRequest $request)
+    public function store(StoreInvoiceRequest $request, SettingService $settings)
     {
         try {
             DB::beginTransaction();
 
+            // Build the immutable configuration snapshot before any calculation.
+            // This throws ValidationException if required settings are missing.
+            $snapshot = $settings->buildInvoiceSnapshot();
+
             $data = $request->validated();
-            
-            // Generar número de factura si no viene (aunque el request no lo pide, el modelo lo tiene)
+
             $data['invoice_number'] = Invoice::generateInvoiceNumber();
-            
-            // Calcular total si no viene o recalcular
-            $amount = $data['amount'];
-            $tax = $data['tax_amount'] ?? 0;
-            $data['total_amount'] = $amount + $tax;
+
+            // REGLA DE CÁLCULO: totals are derived exclusively from the snapshot's
+            // tax_rate, not from the request payload, to guarantee absolute coherence.
+            $amount  = (float) $data['amount'];
+            $taxRate = $settings->taxRateFromSnapshot($snapshot);
+            $tax     = round($amount * $taxRate, 2);
+
+            $data['tax_amount']              = $tax;
+            $data['total_amount']            = round($amount + $tax, 2);
+            $data['configuration_snapshot']  = $snapshot;
 
             $invoice = Invoice::create($data);
 
@@ -71,9 +130,23 @@ class InvoiceController extends Controller
 
             return response()->json([
                 'message' => 'Factura creada exitosamente',
-                'invoice' => $invoice
+                'invoice' => $invoice,
             ], 201);
 
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            DB::rollBack();
+            $employee = auth()->user();
+            Log::channel('billing')->warning('Creación manual de factura bloqueada: configuración incompleta', [
+                'employee_id'   => $employee?->id,
+                'employee_name' => $employee?->name,
+                'errors'        => $e->errors(),
+                'timestamp'     => now()->toIso8601String(),
+            ]);
+            return response()->json([
+                'error'      => 'No es posible crear la factura. Debe configurar previamente los parámetros de facturación.',
+                'details'    => $e->errors(),
+                'config_url' => '/configuraciones/facturacion',
+            ], 422);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['error' => 'Error al crear la factura: ' . $e->getMessage()], 500);

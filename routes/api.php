@@ -23,6 +23,8 @@ use App\Http\Controllers\Admin\InternetServiceProviderController;
 use App\Http\Controllers\Admin\IspConnectionController;
 use App\Http\Controllers\Admin\MikrotikRouterController;
 use App\Http\Controllers\FirewallController;
+use App\Http\Controllers\SettingController;
+use App\Http\Controllers\Admin\SettingController as AdminSettingController;
 
 // ── Broadcasting Auth (Reverb / Pusher) ──────────────────────────────────────
 // Acepta tokens de cliente Y de empleado a través de auth:sanctum
@@ -89,9 +91,17 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
     Route::post('/isps/{ispId}/connections', [IspConnectionController::class, 'storeForIsp'])->middleware('super_admin');
 
     // Facturas Admin
+    Route::get('/invoices/config-check', [AdminInvoiceController::class, 'configCheck']);
     Route::post('/invoices/generate-auto', [AdminInvoiceController::class, 'generateAuto']);
     Route::post('/invoices/{invoice}/charge', [AdminInvoiceController::class, 'charge']);
     Route::apiResource('/invoices', AdminInvoiceController::class);
+
+    // Configuraciones del sistema (solo admin)
+    Route::get('/settings', [AdminSettingController::class, 'index']);
+    Route::post('/settings', [AdminSettingController::class, 'store']);
+    Route::put('/settings/{setting}', [AdminSettingController::class, 'update']);
+    Route::delete('/settings/{setting}', [AdminSettingController::class, 'destroy']);
+    Route::put('/settings', [AdminSettingController::class, 'bulkUpdate']);
 
     // Importaciones
     Route::get('/import/template/{table}', [App\Http\Controllers\Admin\ImportController::class, 'downloadTemplate']);
@@ -166,6 +176,9 @@ Route::prefix('transactions')->group(function () {
 Route::prefix('wallet')->group(function () {
     Route::get('/balance', [walletController::class, 'getBalance'])->middleware('auth:sanctum');
 });
+
+// ── Configuraciones públicas (cliente) ───────────────────────────────────────
+Route::get('/settings/public', [SettingController::class, 'public'])->middleware('auth:sanctum');
 
 // ── Facturas (Cliente) ────────────────────────────────────────────────────────
 Route::prefix('invoices')->group(function () {

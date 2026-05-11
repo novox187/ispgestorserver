@@ -11,7 +11,7 @@ class Invoice extends Model
 {
     use HasFactory, Auditable, SoftDeletes;
 
-    protected $fillable = ['client_id', 'client_plan_id', 'invoice_number', 'issue_date', 'due_date', 'amount', 'tax_amount', 'total_amount', 'status', 'payment_method', 'paid_at', 'payment_reference', 'description', 'metadata'];
+    protected $fillable = ['client_id', 'client_plan_id', 'invoice_number', 'issue_date', 'due_date', 'amount', 'tax_amount', 'total_amount', 'status', 'payment_method', 'paid_at', 'payment_reference', 'description', 'metadata', 'configuration_snapshot'];
 
     protected $casts = [
         'issue_date' => 'date',
@@ -21,6 +21,7 @@ class Invoice extends Model
         'total_amount' => 'decimal:2',
         'paid_at' => 'datetime',
         'metadata' => 'array',
+        'configuration_snapshot' => 'array',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
@@ -41,6 +42,16 @@ class Invoice extends Model
     const PAYMENT_MANUAL = 'manual';
     const PAYMENT_CARD = 'card';
     const PAYMENT_TRANSFER = 'transfer';
+
+    /**
+     * Return only the snapshot entries that were marked is_public=true at snapshot time.
+     * Safe to expose to clients — does NOT rely on the live system_settings.is_public flag.
+     */
+    public function getPublicSnapshotAttribute(): array
+    {
+        $snapshot = $this->configuration_snapshot ?? [];
+        return array_filter($snapshot, fn ($entry) => ($entry['_public'] ?? false) === true);
+    }
 
     /**
      * Relación con el cliente
