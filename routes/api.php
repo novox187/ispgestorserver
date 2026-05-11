@@ -105,6 +105,7 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
     // ── Chat Admin ───────────────────────────────────────────────────────────
     Route::prefix('chat')->group(function () {
         Route::get('/conversations', [AdminChatController::class, 'conversations']);
+        Route::get('/client/{clientId}/events', [AdminChatController::class, 'clientEvents']);
         Route::get('/{ticketId}/messages', [AdminChatController::class, 'messages']);
         Route::post('/{ticketId}/messages', [AdminChatController::class, 'store']);
         Route::put('/{ticketId}/assign', [AdminChatController::class, 'assign']);

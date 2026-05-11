@@ -126,6 +126,29 @@ class ChatController extends Controller
     }
 
     /**
+     * GET /api/admin/chat/client/{clientId}/events
+     * Devuelve todos los eventos del sistema de un cliente (wallet_funded, etc.)
+     * independientemente de si tiene un ticket activo.
+     */
+    public function clientEvents(int $clientId): JsonResponse
+    {
+        $events = \App\Models\ClientEvent::where('client_id', $clientId)
+            ->orderBy('created_at', 'asc')
+            ->get()
+            ->map(fn ($e) => [
+                'id'                 => 'evt-' . $e->id,
+                'event_type'         => $e->event_type,
+                'text'               => $e->data['text'] ?? '',
+                'metadata'           => $e->data,
+                'sender'             => 'system',
+                'timestamp'          => $e->created_at->toIso8601String(),
+                'formatted_datetime' => $e->created_at->format('Y-m-d H:i:s'),
+            ]);
+
+        return response()->json(['events' => $events]);
+    }
+
+    /**
      * POST /api/admin/chat/{ticketId}/messages
      * El empleado envía un mensaje en el ticket.
      */
