@@ -90,6 +90,7 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
 
     // Facturas Admin
     Route::post('/invoices/generate-auto', [AdminInvoiceController::class, 'generateAuto']);
+    Route::post('/invoices/{invoice}/charge', [AdminInvoiceController::class, 'charge']);
     Route::apiResource('/invoices', AdminInvoiceController::class);
 
     // Importaciones
