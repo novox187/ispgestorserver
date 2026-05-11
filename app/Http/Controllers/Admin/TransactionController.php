@@ -59,7 +59,7 @@ class TransactionController extends Controller
                 );
                 $imagePublicId = $uploadResult['public_id'];
                 $imageUrl      = $uploadResult['secure_url'];
-            } catch (\Exception $e) {
+            } catch (\Throwable $e) {
                 Log::error('Cloudinary upload failed in addFunds: ' . $e->getMessage(), [
                     'client_id' => $id,
                 ]);

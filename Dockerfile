@@ -24,6 +24,8 @@ RUN apk add --no-cache \
         nginx \
         supervisor \
         curl \
+        curl-dev \
+        ca-certificates \
         libpng-dev \
         libjpeg-turbo-dev \
         libwebp-dev \
@@ -48,7 +50,8 @@ RUN apk add --no-cache \
         zip \
         intl \
         opcache \
-        sockets
+        sockets \
+        curl
 
 # Directorios de logs para supervisor
 RUN mkdir -p /var/log/supervisor /run/nginx
