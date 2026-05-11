@@ -1,373 +1,1080 @@
-# ISPgestor Server (Backend)
+# ISPgestor Server
 
-[![Status](https://img.shields.io/badge/status-en%20desarrollo-yellow)](#)
+[![Status](https://img.shields.io/badge/status-producción-brightgreen)](#)
 [![PHP](https://img.shields.io/badge/PHP-%5E8.2-777bb4?logo=php&logoColor=white)](#requisitos-previos)
 [![Laravel](https://img.shields.io/badge/Laravel-%5E12-ff2d20?logo=laravel&logoColor=white)](https://laravel.com/)
-[![Vite](https://img.shields.io/badge/Vite-%5E7-646cff?logo=vite&logoColor=white)](https://vitejs.dev/)
+[![Sanctum](https://img.shields.io/badge/Sanctum-4-ff2d20?logo=laravel&logoColor=white)](https://laravel.com/docs/sanctum)
+[![Reverb](https://img.shields.io/badge/Reverb-WebSocket-6366f1)](#)
+[![License](https://img.shields.io/badge/licencia-privada-lightgrey)](#licencia)
 
-Backend API y servicios del sistema ISPgestor. Implementa lógica de negocio para administración de clientes/planes/facturación, y orquesta integraciones (p. ej., MikroTik RouterOS y almacenamiento en Cloudinary).
+API REST y servidor de tiempo real para el sistema ISPgestor. Construido con Laravel 12, gestiona clientes, facturación automática, integración con MikroTik RouterOS, soporte por chat en tiempo real y control de acceso basado en roles.
 
-## Índice
+---
 
-- [Descripción](#descripción)
-- [Stack](#stack)
+## Tabla de contenidos
+
+- [Descripción y arquitectura](#descripción-y-arquitectura)
 - [Requisitos previos](#requisitos-previos)
-- [Instalación](#instalación)
-- [Configuración](#configuración)
-- [Comandos](#comandos)
-- [Seeders](#seeders)
-- [Comandos de consola (Artisan)](#comandos-de-consola-artisan)
+- [Instalación y configuración](#instalación-y-configuración)
+- [Variables de entorno](#variables-de-entorno)
+- [Scripts disponibles](#scripts-disponibles)
 - [Estructura de carpetas](#estructura-de-carpetas)
-- [Ejemplos de uso](#ejemplos-de-uso)
+- [Dependencias](#dependencias)
+- [Modelos y base de datos](#modelos-y-base-de-datos)
+- [Documentación de la API](#documentación-de-la-api)
+- [Autenticación y autorización](#autenticación-y-autorización)
+- [Sistema de colas y jobs](#sistema-de-colas-y-jobs)
+- [WebSocket con Laravel Reverb](#websocket-con-laravel-reverb)
+- [Integración con MikroTik](#integración-con-mikrotik)
+- [Facturación automática](#facturación-automática)
+- [Comandos Artisan personalizados](#comandos-artisan-personalizados)
+- [Despliegue en producción](#despliegue-en-producción)
+- [Troubleshooting](#troubleshooting)
 - [Contribución](#contribución)
-- [Solución de problemas](#solución-de-problemas)
-- [Seguridad](#seguridad)
+- [Licencia](#licencia)
 
-## Descripción
+---
 
-Este proyecto contiene el backend (Laravel) que expone endpoints HTTP para el ecosistema ISPgestor (por ejemplo, el panel `ispgestoradmin`). También ejecuta jobs en cola y tareas de soporte (migraciones, seeds, imports, etc.).
+## Descripción y arquitectura
 
-## Stack
+ISPgestor Server es el backend completo del sistema ISPgestor. Expone una API REST consumida por el panel de administración (`ispgestoradmin`) y un portal de clientes. Utiliza colas asíncronas para las operaciones de facturación y control de estado, y Laravel Reverb para notificaciones WebSocket en tiempo real.
 
-- Framework: Laravel (PHP)
-- Auth API: Laravel Sanctum
-- Base de datos: MySQL/MariaDB (por defecto en `.env.example`)
-- Cola/Jobs: `QUEUE_CONNECTION=database` (por defecto en `.env.example`)
-- Assets (para vistas internas si aplica): Vite + Tailwind (configurados en este repo)
-- Integraciones:
-  - MikroTik RouterOS (RouterOS API)
-  - Cloudinary (filesystem disk `cloudinary`)
+### Stack tecnológico
+
+| Componente | Tecnología | Versión |
+|-----------|-----------|---------|
+| Framework | Laravel | ^12.0 |
+| Lenguaje | PHP | ^8.2 |
+| Autenticación API | Laravel Sanctum | ^4.0 |
+| WebSocket | Laravel Reverb | ^1.10 |
+| ORM | Eloquent | (incluido en Laravel) |
+| Base de datos | MySQL | >= 8.0 |
+| Colas | Database Queue | (incluido en Laravel) |
+| MikroTik | RouterOS API PHP | ^1.6 |
+| Almacenamiento de archivos | Cloudinary Laravel | ^3.0 |
+| Testing | Pest PHP | ^4.1 |
+| Logs | Laravel Pail | ^1.2.2 |
+
+### Diagrama de arquitectura
+
+```
+ispgestoradmin (frontend)
+         │
+         │  HTTP REST (Bearer token)
+         ▼
+┌────────────────────────────────────────┐
+│            Laravel 12 API              │
+│                                        │
+│  Routes/API ──► Controllers ──► Models │
+│       │                           │    │
+│  Middleware (Sanctum, RBAC)        │    │
+│                                   ▼    │
+│  Jobs / Queues              MySQL DB   │
+│  (billing, suspensions)                │
+│                                        │
+│  Events ──► Reverb (WebSocket)         │
+│                                        │
+│  MikroTik API ──► RouterOS             │
+│  Cloudinary ──► File storage           │
+└────────────────────────────────────────┘
+         │  WebSocket (ws://)
+         ▼
+ispgestoradmin (chat en tiempo real)
+```
+
+---
 
 ## Requisitos previos
 
-- PHP 8.2+
-- Composer 2.x
-- Node.js 18+ y npm (o pnpm/yarn) para assets
-- MySQL 8+ / MariaDB
-- Extensiones PHP típicas para Laravel (PDO, OpenSSL, Mbstring, Tokenizer, XML, Ctype, JSON, etc.)
+- **PHP** >= 8.2 con las extensiones: `pdo_mysql`, `mbstring`, `openssl`, `tokenizer`, `xml`, `ctype`, `json`, `bcmath`, `fileinfo`
+- **Composer** >= 2.x
+- **MySQL** >= 8.0
+- **Node.js** >= 18.x + npm (para el servidor de desarrollo con `composer dev`)
+- Acceso de red al router **MikroTik** con la API RouterOS habilitada (puerto 8728 por defecto)
+- (Opcional) Cuenta en **Cloudinary** para almacenamiento de archivos adjuntos
 
-Opcional (según entorno):
-- Redis/Memcached (si se habilitan en `CACHE_STORE` / `REDIS_*`)
-- Credenciales y acceso a MikroTik RouterOS (si se habilita)
-- Cuenta y credenciales de Cloudinary (si se usa el disk `cloudinary`)
+---
 
-## Instalación
+## Instalación y configuración
 
-1. Instalar dependencias PHP:
+### 1. Clonar el repositorio
+
+```bash
+git clone <url-del-repositorio>
+cd ispgestorserver
+```
+
+### 2. Instalar dependencias PHP
 
 ```bash
 composer install
 ```
 
-2. Crear el archivo de entorno:
+### 3. Configurar variables de entorno
 
 ```bash
 cp .env.example .env
-```
-
-En Windows (PowerShell):
-
-```powershell
-Copy-Item .env.example .env
-```
-
-3. Generar clave de aplicación:
-
-```bash
 php artisan key:generate
 ```
 
-4. Instalar dependencias de frontend (solo si vas a compilar assets):
+Edita `.env` con los valores de tu entorno. Ver la sección [Variables de entorno](#variables-de-entorno).
 
-```bash
-npm install
+### 4. Configurar la base de datos
+
+Crea la base de datos en MySQL:
+
+```sql
+CREATE DATABASE ispgestorserver CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-5. Configurar base de datos en `.env` y ejecutar migraciones:
+Ejecuta las migraciones y los seeders de datos iniciales:
 
 ```bash
 php artisan migrate
-```
-
-Notas:
-- Si `QUEUE_CONNECTION=database`, asegúrate de que existan las tablas de jobs/failed jobs según las migraciones del proyecto.
-- Para servir archivos públicos, en entornos locales puede ser útil:
-
-```bash
-php artisan storage:link
-```
-
-## Configuración
-
-### Variables de entorno
-
-La configuración base se toma de `.env` (ver `.env.example`). Además, existen variables adicionales usadas por integraciones.
-
-| Variable | Ejemplo | Requerida | Descripción |
-|---|---:|:---:|---|
-| `APP_ENV` | `local` | Sí | Entorno de ejecución (`local`, `staging`, `production`, etc.). |
-| `APP_KEY` | (auto) | Sí | Clave de Laravel para cifrado y sesiones. |
-| `APP_URL` | `http://localhost` | Sí | URL base de la app (útil para links/storage). |
-| `DB_CONNECTION` | `mysql` | Sí | Driver de DB. |
-| `DB_HOST` / `DB_PORT` | `127.0.0.1` / `3306` | Sí | Host/puerto de DB. |
-| `DB_DATABASE` / `DB_USERNAME` / `DB_PASSWORD` | `ispgestorserver` | Sí | Credenciales de DB. |
-| `QUEUE_CONNECTION` | `database` | No | Driver de cola (por defecto database). |
-| `CACHE_STORE` | `database` | No | Store de cache (por defecto database). |
-| `SANCTUM_STATEFUL_DOMAINS` | `localhost` | Depende | Necesaria si se usa Sanctum con cookies/SPA en el mismo dominio. |
-
-#### MikroTik (RouterOS)
-
-Se configura vía `config/mikrotik.php`.
-
-| Variable | Ejemplo | Requerida | Descripción |
-|---|---:|:---:|---|
-| `MIKROTIK_ENABLED` | `true` | No | Habilita integración. En CI/dev puede desactivarse. |
-| `MIKROTIK_HOST` | `10.0.0.2` | Sí* | Host/IP del router. |
-| `MIKROTIK_PORT` | `8728` | No | Puerto de API. |
-| `MIKROTIK_USER` | `router_user` | Sí* | Usuario RouterOS API. |
-| `MIKROTIK_PASS` | (secreto) | Sí* | Contraseña RouterOS API. |
-| `MIKROTIK_TIMEOUT` | `2` | No | Timeout en segundos. |
-| `MIKROTIK_ATTEMPTS` / `MIKROTIK_DELAY` | `1` / `0` | No | Reintentos/delay. |
-
-\* Requerida si `MIKROTIK_ENABLED=true`.
-
-#### Cloudinary (uploads y storage)
-
-Se configura vía `config/cloudinary.php` y `config/filesystems.php` (disk `cloudinary`).
-
-| Variable | Ejemplo | Requerida | Descripción |
-|---|---:|:---:|---|
-| `CLOUDINARY_URL` | `cloudinary://...` | Sí* | URL completa (recomendado). |
-| `CLOUDINARY_CLOUD_NAME` | `mi-cloud` | Sí* | Nombre de cloud. |
-| `CLOUDINARY_KEY` | `...` | Sí* | API key. |
-| `CLOUDINARY_SECRET` | (secreto) | Sí* | API secret. |
-| `CLOUDINARY_SECURE` | `true` | No | Forzar HTTPS. |
-| `CLOUDINARY_PREFIX` | `...` | No | Prefijo/opcional. |
-| `CLOUDINARY_NOTIFICATION_URL` | `https://...` | No | Webhook de notificación. |
-| `CLOUDINARY_UPLOAD_PRESET` | `...` | No | Upload preset de Cloudinary. |
-
-\* Requerida si se usa el disk `cloudinary` o endpoints que suben/transforman medios.
-
-## Comandos
-
-### Desarrollo (recomendado)
-
-Levanta servidor HTTP, worker de cola, logs (Pail) y Vite en paralelo:
-
-```bash
-composer run dev
-```
-
-Alternativa (manual):
-
-```bash
-php artisan serve
-php artisan queue:listen --tries=1
-npm run dev
-```
-
-### Producción (referencial)
-
-Instalar dependencias optimizadas y compilar assets:
-
-```bash
-composer install --no-dev --optimize-autoloader
-npm ci
-npm run build
-```
-
-Preparar caches de Laravel:
-
-```bash
-php artisan config:cache
-php artisan route:cache
-php artisan view:cache
-```
-
-Ejecutar migraciones en producción:
-
-```bash
-php artisan migrate --force
-```
-
-Ejecutar workers:
-
-```bash
-php artisan queue:work --tries=1
-```
-
-Nota: en producción se recomienda servir `public/` con Nginx/Apache o PHP-FPM en lugar de `php artisan serve`.
-
-### Tests y calidad
-
-```bash
-composer run test
-```
-
-Formateo (Pint):
-
-```bash
-./vendor/bin/pint
-```
-
-### Base de datos (migraciones/seeders)
-
-Re-crear el esquema desde cero y poblarlo con datos de ejemplo:
-
-```bash
-php artisan migrate:fresh --seed
-```
-
-Ejecutar seeders sin recrear el esquema:
-
-```bash
 php artisan db:seed
 ```
 
-Ejecutar un seeder específico:
+Los seeders crean un administrador por defecto, roles, permisos y datos de prueba.
+
+### 5. Iniciar todos los servicios en desarrollo
+
+El comando `dev` de Composer lanza en paralelo el servidor HTTP, el worker de colas, el visor de logs y Reverb:
 
 ```bash
-php artisan db:seed --class=Database\\Seeders\\PlanSeeder
+composer dev
 ```
 
-## Seeders
-
-Los seeders viven en `database/seeders/` y se orquestan desde `DatabaseSeeder`.
-
-Orden actual de carga (resumen):
-
-- Permisos: `PermissionSeeder`
-- Roles y administradores: `RolSeeder`, `RolePermissionSeeder`, `AdministradorSeeder`
-- Planes y características: `PlanSeeder`, `PlanFeatureSeeder`
-- Clientes y relación cliente-plan: `ClientSeeder`, `ClientPlanSeeder`
-- Billeteras y transacciones: `WalletSeeder`, `TransactionSeeder`
-- Tickets/soporte: `SupportSeeder`
-
-Uso recomendado para un entorno limpio de desarrollo:
+O puedes iniciar cada servicio por separado:
 
 ```bash
-php artisan migrate:fresh --seed
+# Servidor HTTP
+php artisan serve
+
+# Worker de colas (necesario para billing y suspensiones)
+php artisan queue:listen --tries=1
+
+# Servidor WebSocket (chat en tiempo real)
+php artisan reverb:start
+
+# Visor de logs en tiempo real
+php artisan pail
 ```
 
-## Comandos de consola (Artisan)
+La API estará disponible en `http://localhost:8000`.
 
-Este proyecto incluye comandos personalizados además de los estándar de Laravel. Para verlos todos:
+---
 
-```bash
-php artisan list
+## Variables de entorno
+
+Copia `.env.example` a `.env` y configura cada sección:
+
+### Aplicación
+
+```env
+APP_NAME=ISPgestor
+APP_ENV=local             # local | production
+APP_KEY=                  # Generada con php artisan key:generate
+APP_DEBUG=true            # false en producción
+APP_URL=http://localhost
+APP_LOCALE=es
 ```
 
-### MikroTik
+### Base de datos
 
-Probar conectividad y, opcionalmente, permisos de escritura en `/queue/simple`:
-
-```bash
-php artisan mikrotik:test --write-test
+```env
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=ispgestorserver
+DB_USERNAME=root
+DB_PASSWORD=tu-password
 ```
 
-Mostrar stack trace completo (útil en entornos de CI/producción):
+### Colas y caché
 
-```bash
-php artisan mikrotik:test --trace
+```env
+QUEUE_CONNECTION=database   # Almacena jobs en la tabla jobs de MySQL
+CACHE_STORE=database
+SESSION_DRIVER=database
 ```
 
-Sincronizar Simple Queues (planes y clientes) con el router:
+### Broadcasting (Laravel Reverb — WebSocket)
 
-```bash
-php artisan mikrotik:sync-queues
+```env
+BROADCAST_CONNECTION=reverb   # "log" en dev, "reverb" en producción
+
+REVERB_APP_ID=ispgestor
+REVERB_APP_KEY=isp-chat-key   # Debe coincidir con VITE_REVERB_APP_KEY del frontend
+REVERB_APP_SECRET=tu-secreto
+REVERB_HOST=0.0.0.0
+REVERB_PORT=8080
+REVERB_SCHEME=http            # https en producción
 ```
 
-Sincronizar y además eliminar colas huérfanas (solo si estás seguro):
+### MikroTik RouterOS API
 
-```bash
-php artisan mikrotik:sync-queues --cleanup
+```env
+MIKROTIK_HOST=192.168.88.1    # IP del router
+MIKROTIK_USER=admin
+MIKROTIK_PASS=tu-password
+MIKROTIK_PORT=8728            # Puerto de la API RouterOS
+MIKROTIK_TIMEOUT=10
+MIKROTIK_ATTEMPTS=10
+MIKROTIK_DELAY=1
 ```
 
 ### Facturación automática
 
-Proceso completo (genera facturas y procesa pagos automáticos):
-
-```bash
-php artisan billing:process
+```env
+BILLING_SUSPENSION_GRACE_DAYS=3               # Días de gracia antes de suspender
+BILLING_TIMEZONE=America/Bogota               # Zona horaria para los schedulers
+BILLING_SCHEDULE_INVOICE_DAY=1                # Día del mes para generar facturas
+BILLING_SCHEDULE_INVOICE_TIME=00:05           # Hora de generación de facturas
+BILLING_SCHEDULE_PAYMENTS_TIME=02:00          # Hora de procesamiento de pagos
+BILLING_SCHEDULE_SUSPEND_TIME=08:00           # Hora de ejecución de suspensiones
+BILLING_SCHEDULE_REACTIVATE_TIME=10:00        # Hora de revisión de reactivaciones
+BILLING_SCHEDULE_MKSYNC_HOUR1=6               # Primera sincronización diaria MikroTik
+BILLING_SCHEDULE_MKSYNC_HOUR2=18              # Segunda sincronización diaria MikroTik
+BILLING_QUEUE_SUSPENSIONS=suspensions         # Nombre de la cola para suspensiones
+BILLING_QUEUE_REACTIVATIONS=reactivations     # Nombre de la cola para reactivaciones
 ```
 
-Solo generar facturas:
+### Cloudinary (almacenamiento de archivos adjuntos)
 
-```bash
-php artisan billing:process --generate-invoices
+```env
+CLOUDINARY_URL=cloudinary://api_key:api_secret@cloud_name
 ```
 
-Solo procesar pagos:
+### Correo electrónico
 
-```bash
-php artisan billing:process --process-payments
+```env
+MAIL_MAILER=smtp              # log | smtp | sendmail
+MAIL_HOST=smtp.mailtrap.io
+MAIL_PORT=2525
+MAIL_USERNAME=tu-usuario
+MAIL_PASSWORD=tu-password
+MAIL_FROM_ADDRESS=noreply@tudominio.com
+MAIL_FROM_NAME=ISPgestor
 ```
 
-Procesar solo un cliente:
+---
 
-```bash
-php artisan billing:process --client-id=123
-```
+## Scripts disponibles
 
-### Otros
+### Composer
 
-```bash
-php artisan inspire
-```
+| Comando | Descripción |
+|---------|-------------|
+| `composer dev` | Inicia servidor, queue, logs y Vite en paralelo |
+| `composer test` | Limpia caché y ejecuta la suite de tests con Pest |
+
+### Artisan — Generales
+
+| Comando | Descripción |
+|---------|-------------|
+| `php artisan serve` | Servidor HTTP de desarrollo |
+| `php artisan migrate` | Ejecutar migraciones pendientes |
+| `php artisan migrate:fresh --seed` | Recrear toda la base de datos con seeders |
+| `php artisan db:seed` | Ejecutar seeders sin recrear tablas |
+| `php artisan queue:listen` | Procesar jobs de la cola en tiempo real |
+| `php artisan queue:work` | Procesar jobs de la cola (daemon) |
+| `php artisan schedule:run` | Ejecutar las tareas programadas manualmente |
+| `php artisan schedule:work` | Iniciar el scheduler en modo daemon (dev) |
+| `php artisan reverb:start` | Iniciar el servidor WebSocket |
+| `php artisan pail` | Ver logs de la aplicación en tiempo real |
+| `php artisan tinker` | REPL interactivo de Laravel |
+
+### Artisan — Comandos personalizados
+
+| Comando | Descripción |
+|---------|-------------|
+| `php artisan mikrotik:test` | Probar la conectividad con el router MikroTik |
+| `php artisan billing:check-reactivate` | Verificar y reactivar clientes que pagaron |
+| `php artisan billing:process-auto` | Procesar facturación automática manualmente |
+
+---
 
 ## Estructura de carpetas
 
-Estructura principal (Laravel):
-
-```text
+```
 ispgestorserver/
-├─ app/                 # Lógica de dominio: Models, Services, Controllers, etc.
-├─ bootstrap/           # Bootstrap Laravel
-├─ config/              # Configuración (mikrotik, cloudinary, sanctum, etc.)
-├─ database/            # Migraciones, factories, seeders
-├─ public/              # Document root (deploy)
-├─ resources/           # Assets (js/css) para Vite (si aplica)
-├─ routes/              # api.php, web.php, console.php
-├─ storage/             # Logs, cache, archivos
-├─ tests/               # Tests
-└─ composer.json        # Dependencias PHP y scripts
+├─ app/
+│  ├─ Console/
+│  │  └─ Commands/
+│  │     ├─ CheckAndReactivate.php         # Reactivar clientes con saldo suficiente
+│  │     ├─ ProcessAutoBilling.php         # Facturación automática manual
+│  │     └─ TestMikroTikConnection.php    # Test de conectividad al router
+│  ├─ Events/
+│  │  ├─ ClientEventBroadcast.php          # Evento: cambio de estado de cliente (WebSocket)
+│  │  └─ MessageSent.php                   # Evento: nuevo mensaje de chat (WebSocket)
+│  ├─ Http/
+│  │  ├─ Controllers/
+│  │  │  ├─ Admin/                         # Controladores del panel de administración
+│  │  │  │  ├─ ChatController.php         # Gestión de tickets de soporte
+│  │  │  │  ├─ ClientController.php       # CRUD de clientes y cambios de estado
+│  │  │  │  ├─ DashboardController.php    # Estadísticas y KPIs del dashboard
+│  │  │  │  ├─ EmployeeController.php     # Gestión de empleados y roles
+│  │  │  │  ├─ ImportController.php       # Importación masiva de clientes
+│  │  │  │  ├─ InvoiceController.php      # Gestión de facturas (admin)
+│  │  │  │  ├─ InternetServiceProviderController.php  # ISPs
+│  │  │  │  ├─ IspConnectionController.php            # Uplinks de ISPs
+│  │  │  │  ├─ MikrotikRouterController.php           # Configuración de routers
+│  │  │  │  ├─ PlanController.php         # Planes de servicio
+│  │  │  │  └─ TransactionController.php  # Transacciones de billetera (admin)
+│  │  │  ├─ AuthClientController.php      # Autenticación de clientes (portal)
+│  │  │  ├─ AuthEmployeeController.php    # Autenticación de empleados (admin)
+│  │  │  ├─ ClientPlanController.php      # Consultas de plan del cliente
+│  │  │  ├─ FirewallController.php        # Reglas de firewall MikroTik
+│  │  │  ├─ InvoiceController.php         # Facturas (portal de clientes)
+│  │  │  ├─ MessageController.php         # Mensajes de chat
+│  │  │  ├─ MikroTikController.php        # API del sistema MikroTik
+│  │  │  ├─ TransactionController.php     # Transacciones (portal de clientes)
+│  │  │  └─ walletController.php          # Saldo de la billetera
+│  │  └─ Middleware/
+│  │     └─ EnsureEmployeeSuperAdmin.php  # Middleware de rol Super Admin
+│  ├─ Jobs/
+│  │  ├─ GenerateMonthlyInvoices.php      # Generar facturas mensuales
+│  │  ├─ ProcessAutoReactivation.php      # Reactivar cliente tras pago
+│  │  ├─ ProcessClientSuspension.php      # Suspender cliente moroso
+│  │  └─ SyncMikroTikQueues.php           # Sincronizar colas del router
+│  └─ Models/
+│     ├─ Client.php                        # Cliente (Authenticatable)
+│     ├─ ClientEvent.php                   # Eventos de actividad del cliente
+│     ├─ ClientPlan.php                    # Asignación de plan a cliente
+│     ├─ Employee.php                      # Empleado/usuario del panel
+│     ├─ FirewallApplyLog.php             # Historial de cambios de firewall
+│     ├─ FirewallFilterRule.php           # Reglas de filtro MikroTik
+│     ├─ FirewallNatRule.php              # Reglas NAT MikroTik
+│     ├─ ImportHistory.php                # Historial de importaciones
+│     ├─ InternetServiceProvider.php      # Proveedor de internet (ISP)
+│     ├─ Invoice.php                       # Factura de servicio
+│     ├─ IspConnection.php                # Conexión/uplink de ISP
+│     ├─ Message.php                       # Mensaje de chat
+│     ├─ MikrotikRouter.php               # Configuración de router
+│     ├─ Permission.php                    # Permiso RBAC
+│     ├─ Plan.php                          # Plan de servicio
+│     ├─ PlanFeature.php                   # Característica de plan
+│     ├─ Role.php                          # Rol de empleado
+│     ├─ Support.php                       # Ticket de soporte
+│     ├─ Ticket.php                        # Seguimiento de ticket de chat
+│     ├─ Transaction.php                   # Transacción de billetera
+│     └─ Wallet.php                        # Billetera del cliente
+│
+├─ routes/
+│  ├─ api.php                              # Todas las rutas de la API REST
+│  ├─ web.php                              # Rutas web (mínimas)
+│  └─ channels.php                         # Definición de canales WebSocket
+│
+├─ database/
+│  ├─ migrations/                          # Definiciones de esquema (~27 archivos)
+│  ├─ seeders/
+│  │  ├─ DatabaseSeeder.php               # Orquestador principal de seeders
+│  │  ├─ AdministradorSeeder.php          # Usuario administrador por defecto
+│  │  ├─ RolSeeder.php                    # Roles del sistema
+│  │  ├─ PermissionSeeder.php             # Permisos RBAC
+│  │  ├─ RolePermissionSeeder.php         # Asignación de permisos a roles
+│  │  ├─ PlanSeeder.php                   # Planes de servicio de ejemplo
+│  │  ├─ PlanFeatureSeeder.php            # Características de planes
+│  │  ├─ ClientSeeder.php                 # Clientes de prueba
+│  │  ├─ ClientPlanSeeder.php             # Asignaciones plan-cliente
+│  │  ├─ WalletSeeder.php                 # Billeteras de prueba
+│  │  ├─ TransactionSeeder.php            # Transacciones de prueba
+│  │  └─ SupportSeeder.php               # Tickets de soporte de prueba
+│  └─ factories/                           # Factories para tests
+│
+├─ config/
+│  ├─ mikrotik.php                         # Configuración del cliente RouterOS API
+│  ├─ sanctum.php                          # Configuración de autenticación
+│  ├─ broadcasting.php                     # Configuración de canales WebSocket
+│  └─ [archivos de configuración estándar de Laravel]
+│
+├─ storage/
+│  ├─ app/                                 # Almacenamiento local de archivos
+│  ├─ logs/                               # Archivos de log de la aplicación
+│  └─ framework/                           # Caché, vistas compiladas y sesiones
+│
+├─ tests/
+│  ├─ Feature/                             # Tests de integración (Pest)
+│  └─ Unit/                               # Tests unitarios
+│
+├─ .env.example                            # Plantilla de variables de entorno
+├─ artisan                                 # CLI de Laravel
+├─ composer.json                           # Dependencias PHP
+└─ Dockerfile                             # Imagen Docker para producción
 ```
 
-## Ejemplos de uso
+---
 
-### Consumir la API desde un cliente HTTP
+## Dependencias
 
-Ejemplo genérico de llamada autenticada (token Bearer):
+### Producción (`require`)
+
+| Paquete | Versión | Propósito |
+|---------|---------|-----------|
+| `php` | ^8.2 | Lenguaje base |
+| `laravel/framework` | ^12.0 | Framework PHP |
+| `laravel/sanctum` | ^4.0 | Autenticación API con tokens |
+| `laravel/reverb` | ^1.10 | Servidor WebSocket nativo |
+| `laravel/tinker` | ^2.10.1 | REPL interactivo |
+| `evilfreelancer/routeros-api-php` | ^1.6 | Cliente RouterOS API para MikroTik |
+| `cloudinary-labs/cloudinary-laravel` | ^3.0 | Almacenamiento de archivos en Cloudinary |
+
+### Desarrollo (`require-dev`)
+
+| Paquete | Versión | Propósito |
+|---------|---------|-----------|
+| `pestphp/pest` | ^4.1 | Framework de testing moderno |
+| `pestphp/pest-plugin-laravel` | ^4.0 | Plugin Pest para Laravel |
+| `laravel/pail` | ^1.2.2 | Visor de logs en tiempo real |
+| `laravel/pint` | ^1.24 | Formateador de código PHP |
+| `laravel/sail` | ^1.41 | Entorno Docker para desarrollo |
+| `fakerphp/faker` | ^1.23 | Generación de datos falsos para tests |
+| `mockery/mockery` | ^1.6 | Mocking para tests unitarios |
+| `nunomaduro/collision` | ^8.6 | Reportes de error más legibles |
+
+---
+
+## Modelos y base de datos
+
+### Tablas principales
+
+| Tabla | Modelo | Descripción |
+|-------|--------|-------------|
+| `clients` | `Client` | Clientes del ISP (Authenticatable) |
+| `employees` | `Employee` | Empleados/administradores |
+| `plans` | `Plan` | Planes de servicio con velocidades y precio |
+| `plan_features` | `PlanFeature` | Características adicionales por plan |
+| `clients_plans` | `ClientPlan` | Asignación de plan a cliente |
+| `wallets` | `Wallet` | Billetera/saldo del cliente |
+| `transactions` | `Transaction` | Movimientos de la billetera |
+| `invoices` | `Invoice` | Facturas de servicio mensual |
+| `roles` | `Role` | Roles de empleados |
+| `permissions` | `Permission` | Permisos del sistema RBAC |
+| `role_permission` | — | Relación roles ↔ permisos |
+| `tickets` | `Ticket` | Tickets de soporte |
+| `messages` | `Message` | Mensajes de chat dentro de tickets |
+| `attachments` | `Attachment` | Archivos adjuntos en mensajes |
+| `supports` | `Support` | Información base del soporte |
+| `mikrotik_routers` | `MikrotikRouter` | Configuración de routers |
+| `firewall_filter_rules` | `FirewallFilterRule` | Reglas de filtro MikroTik |
+| `firewall_nat_rules` | `FirewallNatRule` | Reglas NAT MikroTik |
+| `firewall_apply_logs` | `FirewallApplyLog` | Historial de cambios de firewall |
+| `internet_service_providers` | `InternetServiceProvider` | ISPs registrados |
+| `isp_connections` | `IspConnection` | Uplinks/conexiones de ISPs |
+| `import_history` | `ImportHistory` | Registros de importaciones |
+| `audits` | `Audit` | Log de auditoría de cambios |
+| `client_events` | `ClientEvent` | Eventos de actividad del cliente |
+| `personal_access_tokens` | — | Tokens de Sanctum |
+| `jobs` | — | Jobs de la cola |
+| `cache` | — | Caché de la aplicación |
+
+### Relaciones clave
+
+```
+Client ──── has one  ──── Wallet
+Client ──── has many ──── Transaction
+Client ──── has many ──── Invoice
+Client ──── has many ──── ClientPlan ──── belongs to ──── Plan
+Client ──── has many ──── Ticket
+Ticket ──── has many ──── Message
+Employee ── belongs to ── Role
+Role ─────── belongs to many ── Permission
+MikrotikRouter ── has many ── FirewallFilterRule
+MikrotikRouter ── has many ── FirewallNatRule
+MikrotikRouter ── has many ── FirewallApplyLog
+InternetServiceProvider ── has many ── IspConnection
+```
+
+---
+
+## Documentación de la API
+
+Todas las rutas de la API están bajo el prefijo `/api`. Las rutas autenticadas requieren el header `Authorization: Bearer {TOKEN}`.
+
+### Autenticación de empleados
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `POST` | `/api/employee/login` | Login → retorna token Sanctum |
+| `POST` | `/api/employee/logout` | Logout e invalidación del token |
+| `GET` | `/api/user` | Datos del usuario autenticado |
+
+### Autenticación de clientes (portal)
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `POST` | `/api/client/login` | Login del cliente |
+| `POST` | `/api/client/logout` | Logout del cliente |
+
+### Dashboard
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/admin/dashboard/stats` | KPIs: clientes activos, ingresos, facturas |
+| `GET` | `/api/admin/dashboard/full-stats` | Estadísticas extendidas con tendencias |
+| `GET` | `/api/admin/dashboard/top-debtors` | Lista de mayores deudores |
+
+### Clientes
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/admin/clientes/summary` | Lista con filtros (`estado`, `plan_id`, etc.) |
+| `GET` | `/api/admin/clientes/full/{id}` | Detalle completo del cliente |
+| `POST` | `/api/admin/clientes/crear` | Crear nuevo cliente |
+| `PUT` | `/api/admin/clientes/{id}` | Actualizar datos personales |
+| `POST` | `/api/admin/clientes/{id}/suspend` | Suspender servicio |
+| `POST` | `/api/admin/clientes/{id}/activate` | Reactivar servicio |
+| `POST` | `/api/admin/clientes/{id}/cancel` | Cancelar contrato |
+| `POST` | `/api/admin/clientes/{id}/add-funds` | Agregar fondos a la wallet |
+
+### Planes
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/admin/planes/summary` | Listar planes con estadísticas |
+| `POST` | `/api/admin/planes` | Crear plan |
+| `PUT` | `/api/admin/planes/{id}` | Actualizar plan |
+| `PUT` | `/api/admin/planes/{id}/status` | Activar/desactivar plan |
+
+### Facturación
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/admin/invoices` | Listar facturas (filtros por estado, cliente, fecha) |
+| `POST` | `/api/admin/invoices/generate-auto` | Generar facturas automáticas |
+| `GET` | `/api/invoices` | Facturas del cliente autenticado (portal) |
+
+### Empleados
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/admin/employees` | Listar empleados |
+| `POST` | `/api/admin/employees` | Crear empleado |
+| `PUT` | `/api/admin/employees/{id}` | Actualizar empleado |
+| `DELETE` | `/api/admin/employees/{id}` | Eliminar empleado |
+
+### ISPs y conexiones
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/admin/isps` | Listar ISPs registrados |
+| `POST` | `/api/admin/isps` | Crear ISP |
+| `PUT` | `/api/admin/isps/{id}` | Actualizar ISP |
+| `GET` | `/api/admin/isp-connections` | Listar conexiones de ISPs |
+| `POST` | `/api/admin/isp-connections` | Crear conexión |
+
+### MikroTik — Routers
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/admin/mikrotik-routers` | Listar routers |
+| `POST` | `/api/admin/mikrotik-routers` | Registrar router |
+| `PUT` | `/api/admin/mikrotik-routers/{id}` | Actualizar router |
+| `DELETE` | `/api/admin/mikrotik-routers/{id}` | Eliminar router |
+
+### MikroTik — Firewall
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/mikrotik/firewall/snapshot` | Snapshot actual de reglas |
+| `POST` | `/api/mikrotik/firewall/validate` | Validar cambios propuestos |
+| `POST` | `/api/mikrotik/firewall/apply` | Aplicar cambios al router |
+| `GET` | `/api/mikrotik/firewall/apply-logs` | Historial de cambios |
+| `POST` | `/api/mikrotik/firewall/apply-logs/{id}/rollback` | Revertir un cambio |
+| `GET` | `/api/mikrotik/firewall/router-status` | Estado de conectividad |
+| `POST` | `/api/mikrotik/firewall/sync/from-router` | Importar reglas del router |
+| `POST` | `/api/mikrotik/firewall/sync/merge-from-router` | Fusionar reglas del router |
+
+### Chat y soporte
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/api/admin/chat/conversations` | Listar tickets de soporte |
+| `GET` | `/api/admin/chat/{ticketId}/messages` | Mensajes de un ticket |
+| `POST` | `/api/admin/chat/{ticketId}/messages` | Enviar mensaje (admin) |
+
+### Importación
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `POST` | `/api/admin/import/validate` | Validar archivo antes de importar |
+| `POST` | `/api/admin/import/process` | Ejecutar importación |
+
+### WebSocket (broadcasting)
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `POST` | `/api/broadcasting/auth` | Autenticar canal privado de WebSocket |
+
+---
+
+## Autenticación y autorización
+
+### Laravel Sanctum (tokens API)
+
+- Los tokens se generan en el login y se almacenan en la tabla `personal_access_tokens`
+- Cada petición autenticada requiere: `Authorization: Bearer {TOKEN}`
+- Los tokens no tienen expiración por defecto (configurable en `config/sanctum.php`)
+
+### RBAC (Control de acceso basado en roles)
+
+El sistema incluye un esquema de roles y permisos:
+
+```
+Employee ── belongs to ── Role ── has many ── Permission
+```
+
+El middleware `EnsureEmployeeSuperAdmin` protege rutas que requieren el rol de Super Admin (gestión de empleados, configuraciones del sistema).
+
+### Guards configurados
+
+| Guard | Modelo | Uso |
+|-------|--------|-----|
+| `employee` | `Employee` | Panel de administración |
+| `client` | `Client` | Portal de clientes |
+
+---
+
+## Sistema de colas y jobs
+
+Las operaciones de billing se ejecutan de forma asíncrona mediante jobs de Laravel:
+
+| Job | Cola | Disparado por | Acción |
+|-----|------|--------------|--------|
+| `GenerateMonthlyInvoices` | `default` | Scheduler (día 1 del mes) | Genera facturas para todos los clientes activos |
+| `ProcessClientSuspension` | `suspensions` | Scheduler + eventos | Suspende el servicio de clientes morosos |
+| `ProcessAutoReactivation` | `reactivations` | Scheduler + eventos | Reactiva clientes que saldaron su deuda |
+| `SyncMikroTikQueues` | `default` | Scheduler (2 veces al día) | Sincroniza planes con colas del router |
+
+### Iniciar workers
 
 ```bash
-curl -H "Authorization: Bearer <TOKEN>" \
-  -H "Accept: application/json" \
-  http://localhost:8000/api/admin/clientes/summary
+# Procesar todas las colas (desarrollo)
+php artisan queue:listen --tries=1
+
+# Worker persistente en producción con colas específicas
+php artisan queue:work --queue=suspensions,reactivations,default --tries=3 --sleep=3
+
+# Con Supervisor (recomendado en producción)
+# Ver sección de despliegue
 ```
+
+### Ver estado de las colas
+
+```bash
+php artisan queue:monitor
+php artisan queue:failed
+php artisan queue:retry all
+```
+
+---
+
+## WebSocket con Laravel Reverb
+
+Reverb es el servidor WebSocket nativo de Laravel. Se usa para:
+
+- **Chat en tiempo real:** Los mensajes de soporte se transmiten instantáneamente al panel de admin
+- **Eventos de clientes:** Notificaciones cuando cambia el estado de un cliente
+
+### Canales definidos (`routes/channels.php`)
+
+```php
+// Canal de eventos por cliente
+Broadcast::channel('client-events.{clientId}', ...);
+
+// Canal de chat por ticket
+Broadcast::channel('chat.{ticketId}', ...);
+```
+
+### Iniciar Reverb
+
+```bash
+# Desarrollo
+php artisan reverb:start
+
+# Producción (en background)
+php artisan reverb:start --host=0.0.0.0 --port=8080 --daemon
+```
+
+> Las variables `REVERB_APP_KEY`, `REVERB_HOST` y `REVERB_PORT` deben coincidir con `VITE_REVERB_*` del frontend.
+
+---
+
+## Integración con MikroTik
+
+El sistema se conecta al router MikroTik via la **RouterOS API** (puerto TCP 8728) usando el paquete `evilfreelancer/routeros-api-php`.
+
+### Funcionalidades
+
+- **Colas simples:** Sincronización de planes de velocidad con simple queues del router
+- **Firewall filter:** Gestión de reglas de filtro con historial y rollback
+- **Firewall NAT:** Gestión de reglas de traducción de direcciones
+- **Estado de clientes inalámbricos:** Monitoring de dispositivos conectados
+
+### Habilitar la API en MikroTik
+
+Desde la terminal del router o Winbox:
+
+```
+/ip service enable api
+/ip service set api port=8728
+/user add name=ispgestor password=tu-password group=full
+```
+
+### Probar la conexión
+
+```bash
+php artisan mikrotik:test
+```
+
+---
+
+## Facturación automática
+
+El scheduler de Laravel ejecuta automáticamente las tareas de billing. Para que funcione en producción, agrega la entrada al cron del sistema:
+
+```bash
+* * * * * cd /ruta/del/proyecto && php artisan schedule:run >> /dev/null 2>&1
+```
+
+### Flujo de facturación mensual
+
+```
+Día 1 del mes (00:05)
+   │
+   ▼
+GenerateMonthlyInvoices
+   │  Crea facturas para todos los clientes con plan activo
+   │
+   ▼
+ProcessAutoBilling (02:00)
+   │  Intenta cobrar desde la wallet del cliente
+   │  Si hay saldo → paga la factura → client permanece activo
+   │  Si no hay saldo → factura queda pendiente
+   │
+   ▼
+ProcessClientSuspension (08:00)
+   │  Clientes con facturas vencidas > BILLING_SUSPENSION_GRACE_DAYS días
+   │  → Despacha job a la cola "suspensions"
+   │  → Actualiza estado en DB + notifica a MikroTik
+   │
+   ▼
+CheckAndReactivate (10:00)
+   │  Clientes suspendidos que recargaron saldo
+   │  → Paga la factura pendiente
+   │  → Restaura servicio en DB + notifica a MikroTik
+```
+
+---
+
+## Comandos Artisan personalizados
+
+### `php artisan mikrotik:test`
+
+Verifica la conectividad al router MikroTik usando las credenciales del `.env`. Útil para validar la configuración antes de poner en producción.
+
+```bash
+php artisan mikrotik:test
+# Output: ✓ Conexión exitosa a 192.168.88.1:8728
+# Output: ✗ Error: Connection timed out
+```
+
+### `php artisan billing:check-reactivate`
+
+Ejecuta manualmente el proceso de revisión y reactivación de clientes suspendidos. Equivalente a la tarea programada `CheckAndReactivate`.
+
+### `php artisan billing:process-auto`
+
+Ejecuta manualmente el proceso de facturación automática. Útil para recuperar ciclos perdidos o para pruebas.
+
+---
+
+## Despliegue en producción
+
+### Requisitos del servidor
+
+- Ubuntu 22.04+ / Debian 12+ (recomendado)
+- PHP 8.2 + extensiones requeridas
+- MySQL 8.0+
+- Nginx o Apache
+- Supervisor (para queue workers)
+- Certbot / SSL (para HTTPS)
+
+### Pasos de despliegue
+
+```bash
+# 1. Clonar y configurar
+git clone <repo> /var/www/ispgestorserver
+cd /var/www/ispgestorserver
+composer install --no-dev --optimize-autoloader
+
+# 2. Configurar entorno
+cp .env.example .env
+php artisan key:generate
+# Editar .env con configuración de producción
+
+# 3. Base de datos
+php artisan migrate --force
+php artisan db:seed --force   # Solo la primera vez
+
+# 4. Optimizar Laravel
+php artisan config:cache
+php artisan route:cache
+php artisan view:cache
+php artisan event:cache
+
+# 5. Permisos de storage
+chmod -R 775 storage bootstrap/cache
+chown -R www-data:www-data storage bootstrap/cache
+```
+
+### Configuración de Supervisor (queue workers)
+
+Crea `/etc/supervisor/conf.d/ispgestor-workers.conf`:
+
+```ini
+[program:ispgestor-default]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/ispgestorserver/artisan queue:work --queue=default --tries=3 --sleep=3 --max-time=3600
+autostart=true
+autorestart=true
+user=www-data
+numprocs=2
+redirect_stderr=true
+stdout_logfile=/var/log/ispgestor-default.log
+
+[program:ispgestor-suspensions]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/ispgestorserver/artisan queue:work --queue=suspensions --tries=3 --sleep=5
+autostart=true
+autorestart=true
+user=www-data
+numprocs=1
+redirect_stderr=true
+stdout_logfile=/var/log/ispgestor-suspensions.log
+
+[program:ispgestor-reactivations]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/ispgestorserver/artisan queue:work --queue=reactivations --tries=3 --sleep=5
+autostart=true
+autorestart=true
+user=www-data
+numprocs=1
+redirect_stderr=true
+stdout_logfile=/var/log/ispgestor-reactivations.log
+
+[program:ispgestor-reverb]
+process_name=%(program_name)s
+command=php /var/www/ispgestorserver/artisan reverb:start --host=0.0.0.0 --port=8080
+autostart=true
+autorestart=true
+user=www-data
+redirect_stderr=true
+stdout_logfile=/var/log/ispgestor-reverb.log
+```
+
+```bash
+supervisorctl reread
+supervisorctl update
+supervisorctl start all
+```
+
+### Configuración de Nginx
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name api.tudominio.com;
+    root /var/www/ispgestorserver/public;
+
+    ssl_certificate /etc/letsencrypt/live/api.tudominio.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.tudominio.com/privkey.pem;
+
+    add_header X-Frame-Options "SAMEORIGIN";
+    add_header X-Content-Type-Options "nosniff";
+
+    index index.php;
+    charset utf-8;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    # WebSocket Reverb
+    location /app {
+        proxy_pass http://localhost:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+
+    location ~ \.php$ {
+        fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        include fastcgi_params;
+    }
+
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+}
+```
+
+### Con Docker
+
+```dockerfile
+FROM php:8.2-fpm-alpine
+
+RUN apk add --no-cache \
+    mysql-client \
+    libzip-dev \
+    && docker-php-ext-install pdo_mysql zip bcmath pcntl
+
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+WORKDIR /var/www/html
+COPY . .
+RUN composer install --no-dev --optimize-autoloader
+
+RUN chown -R www-data:www-data storage bootstrap/cache
+
+EXPOSE 9000
+CMD ["php-fpm"]
+```
+
+---
+
+## Troubleshooting
+
+### `php artisan migrate` falla con error de conexión
+
+**Causa:** Credenciales de DB incorrectas o el servidor MySQL no está activo.
+
+```bash
+# Verificar variables de DB en .env
+grep DB_ .env
+
+# Probar conexión manual
+mysql -h 127.0.0.1 -u root -p ispgestorserver
+```
+
+---
+
+### Los jobs de la cola no se procesan
+
+**Causa:** El worker de colas no está corriendo.
+
+```bash
+# Verificar estado de Supervisor
+supervisorctl status
+
+# Iniciar worker manualmente para debug
+php artisan queue:listen --tries=1
+
+# Ver jobs fallidos
+php artisan queue:failed
+php artisan queue:retry all
+```
+
+---
+
+### El WebSocket de Reverb no acepta conexiones
+
+**Causa 1:** Reverb no está iniciado.
+
+```bash
+php artisan reverb:start
+```
+
+**Causa 2:** `BROADCAST_CONNECTION` no está configurado como `reverb` en `.env`.
+
+```bash
+grep BROADCAST_CONNECTION .env
+# Debe ser: BROADCAST_CONNECTION=reverb
+```
+
+**Causa 3:** Las variables `REVERB_APP_KEY` del backend y `VITE_REVERB_APP_KEY` del frontend no coinciden.
+
+---
+
+### Error 419 (CSRF) en peticiones POST
+
+**Causa:** Las rutas de la API no están excluidas de la verificación CSRF.
+
+**Solución:** Las rutas en `routes/api.php` ya están exentas por defecto. Verifica que no hayas movido rutas incorrectamente a `routes/web.php`.
+
+---
+
+### Los clientes no se suspenden automáticamente
+
+**Causa 1:** El cron de `schedule:run` no está configurado en el servidor.
+
+```bash
+# Verificar que el cron existe
+crontab -l | grep artisan
+
+# Agregar si no existe
+* * * * * cd /ruta/del/proyecto && php artisan schedule:run >> /dev/null 2>&1
+```
+
+**Causa 2:** `BILLING_SCHEDULE_SUSPEND_TIME` tiene una hora que ya pasó hoy.
+
+```bash
+# Ejecutar manualmente para verificar
+php artisan billing:check-reactivate
+```
+
+---
+
+### La API de MikroTik retorna "Connection refused"
+
+**Causa:** La API RouterOS está deshabilitada en el router.
+
+**Solución en el router MikroTik:**
+
+```
+/ip service enable api
+/ip service set api port=8728
+```
+
+Verifica también que el firewall del router no bloquea el puerto 8728 desde la IP del servidor.
+
+---
+
+### Error "Class not found" después de `composer install`
+
+```bash
+composer dump-autoload
+php artisan clear-compiled
+php artisan optimize
+```
+
+---
+
+### Archivos adjuntos no se suben (error de Cloudinary)
+
+**Causa:** `CLOUDINARY_URL` no configurada o credenciales inválidas.
+
+```bash
+grep CLOUDINARY_URL .env
+```
+
+Verifica el formato: `cloudinary://API_KEY:API_SECRET@CLOUD_NAME`
+
+---
 
 ## Contribución
 
-- Mantén cambios pequeños y enfocados.
-- Antes de abrir un PR:
-  - Ejecuta tests: `composer run test`
-  - Ejecuta formateo: `./vendor/bin/pint`
-- No subas archivos `.env` ni credenciales.
-- Si agregas una variable de entorno nueva, actualiza `.env.example` y este README.
+1. Haz fork del repositorio
+2. Crea una rama descriptiva: `git checkout -b feature/nombre-funcionalidad`
+3. Sigue los estándares de código PSR-12 (puedes usar `composer pint` para formatear)
+4. Escribe tests para la nueva funcionalidad
+5. Ejecuta la suite de tests: `composer test`
+6. Abre un Pull Request con una descripción clara del cambio y su motivación
 
-## Solución de problemas
+---
 
-| Problema | Causa probable | Solución |
-|---|---|---|
-| `APP_KEY` vacío / error de cifrado | `.env` sin clave | `php artisan key:generate` |
-| `SQLSTATE[HY000] [1045]` | Credenciales DB incorrectas | Verifica `DB_*` y acceso a MySQL |
-| Jobs no se procesan | Worker detenido o tablas faltantes | Ejecuta `php artisan queue:work` y revisa migraciones de jobs |
-| 401/CSRF con Sanctum | Dominios stateful mal configurados | Ajusta `SANCTUM_STATEFUL_DOMAINS` y CORS según tu arquitectura |
-| Error al subir archivos a Cloudinary | Variables Cloudinary incompletas | Configura `CLOUDINARY_*` y revisa el disk en `FILESYSTEM_DISK` |
-| Timeouts con MikroTik | Red/credenciales/puerto | Verifica `MIKROTIK_*`, conectividad y habilitación de API RouterOS |
+## Licencia
 
-## Seguridad
-
-- No publiques secretos en repositorios (DB, Cloudinary, MikroTik).
-- En producción: `APP_DEBUG=false` y logs con nivel adecuado.
-- Rota credenciales ante sospecha de exposición.
-- Asegura permisos correctos para `storage/` y `bootstrap/cache/`.
+Proyecto privado. Todos los derechos reservados.
