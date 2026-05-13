@@ -6,7 +6,7 @@ return [
     'user' => env('MIKROTIK_USER', 'laravel_user'),
     'pass' => env('MIKROTIK_PASS', 'Erty3216'),
     'port' => (int) env('MIKROTIK_PORT', 8728),
-    'timeout' => (int) env('MIKROTIK_TIMEOUT', 2),
+    'timeout' => (int) env('MIKROTIK_TIMEOUT', 3),
     'attempts' => (int) env('MIKROTIK_ATTEMPTS', 1),
     'delay' => (int) env('MIKROTIK_DELAY', 0),
 ];

@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\ClientPlan;
 use App\Models\IspConnection;
 use App\Models\Plan;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -214,42 +215,53 @@ class IspCapacityService
         }
     }
 
+    /**
+     * Fetches queue list from MikroTik and caches it for 60 seconds.
+     * Returns null if MikroTik is unreachable, avoiding a blocking hang on every request.
+     */
+    private function getCachedQueueList(): ?array
+    {
+        return Cache::remember('mikrotik_queue_list', 60, function () {
+            try {
+                $queues = $this->mikrotik->getQueueList();
+                return is_array($queues) ? $queues : null;
+            } catch (Throwable $e) {
+                Log::warning('MikroTik getQueueList failed (capacity snapshot)', [
+                    'error' => $e->getMessage(),
+                ]);
+                return null;
+            }
+        });
+    }
+
     public function getRouterUsedDownMbps(): ?float
     {
-        try {
-            $parents = $this->mikrotik->getQueueList();
-            $sum = 0.0;
-            foreach ($parents as $q) {
-                $pair = (string) ($q['max-limit'] ?? $q['max_limit'] ?? '0/0');
-                [, $down] = $this->parsePairMbps($pair);
-                $sum += $down;
-            }
-            return $sum;
-        } catch (Throwable $e) {
-            Log::warning('Unable to compute router queue consumption', [
-                'error' => $e->getMessage(),
-            ]);
+        $parents = $this->getCachedQueueList();
+        if ($parents === null) {
             return null;
         }
+        $sum = 0.0;
+        foreach ($parents as $q) {
+            $pair = (string) ($q['max-limit'] ?? $q['max_limit'] ?? '0/0');
+            [, $down] = $this->parsePairMbps($pair);
+            $sum += $down;
+        }
+        return $sum;
     }
 
     public function getRouterUsedUpMbps(): ?float
     {
-        try {
-            $parents = $this->mikrotik->getQueueList();
-            $sum = 0.0;
-            foreach ($parents as $q) {
-                $pair = (string) ($q['max-limit'] ?? $q['max_limit'] ?? '0/0');
-                [$up, ] = $this->parsePairMbps($pair);
-                $sum += $up;
-            }
-            return $sum;
-        } catch (Throwable $e) {
-            Log::warning('Unable to compute router queue consumption (up)', [
-                'error' => $e->getMessage(),
-            ]);
+        $parents = $this->getCachedQueueList();
+        if ($parents === null) {
             return null;
         }
+        $sum = 0.0;
+        foreach ($parents as $q) {
+            $pair = (string) ($q['max-limit'] ?? $q['max_limit'] ?? '0/0');
+            [$up, ] = $this->parsePairMbps($pair);
+            $sum += $up;
+        }
+        return $sum;
     }
 
     public function getCapacitySnapshot(): array

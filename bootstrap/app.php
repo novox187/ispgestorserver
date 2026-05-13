@@ -4,6 +4,7 @@ use App\Jobs\GenerateMonthlyInvoices;
 use App\Jobs\ProcessClientSuspension;
 use App\Jobs\SyncMikroTikQueues;
 use App\Http\Middleware\EnsureEmployeeSuperAdmin;
+use App\Http\Middleware\CheckPermission;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -24,6 +25,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->alias([
             'super_admin' => EnsureEmployeeSuperAdmin::class,
+            'permission'  => CheckPermission::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

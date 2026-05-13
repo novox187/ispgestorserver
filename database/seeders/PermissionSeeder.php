@@ -5,37 +5,70 @@ namespace Database\Seeders;
 use App\Models\Permission;
 use Illuminate\Database\Seeder;
 
+/**
+ * Generates permissions from the module × action matrix.
+ *
+ * Slug format: `{module}.{action}` — e.g. `usuarios.crear`, `clientes.ver`
+ *
+ * To add a new module or action:
+ *   1. Add the entry to the MODULES constant below.
+ *   2. Run `php artisan db:seed --class=PermissionSeeder`
+ *   3. Mirror the change in ispgestoradmin/src/lib/config/permissions.ts
+ *   4. Apply the new middleware slug to the relevant route in routes/api.php
+ */
 class PermissionSeeder extends Seeder
 {
-    /**
-     * Run the database seeds.
-     */
+    private const MODULES = [
+        ['slug' => 'usuarios',      'label' => 'Usuarios',       'actions' => ['ver', 'crear', 'editar', 'eliminar']],
+        ['slug' => 'clientes',      'label' => 'Clientes',        'actions' => ['ver', 'crear', 'editar', 'eliminar']],
+        ['slug' => 'planes',        'label' => 'Planes',          'actions' => ['ver', 'crear', 'editar', 'eliminar']],
+        ['slug' => 'facturas',      'label' => 'Facturación',     'actions' => ['ver', 'crear', 'editar', 'eliminar']],
+        ['slug' => 'mikrotik',      'label' => 'MikroTik',        'actions' => ['ver', 'gestionar']],
+        ['slug' => 'proveedores',   'label' => 'Proveedores ISP', 'actions' => ['ver', 'crear', 'editar', 'eliminar']],
+        ['slug' => 'soporte',       'label' => 'Soporte / Chat',  'actions' => ['ver', 'gestionar']],
+        ['slug' => 'configuracion', 'label' => 'Configuración',   'actions' => ['ver', 'gestionar']],
+    ];
+
     public function run(): void
     {
-        $permissions = [
-            ['nombre' => 'Crear Usuario', 'slug' => 'crear_usuario', 'descripcion' => 'Permite crear nuevos usuarios'],
-            ['nombre' => 'Editar Usuario', 'slug' => 'editar_usuario', 'descripcion' => 'Permite editar información de usuarios'],
-            ['nombre' => 'Eliminar Usuario', 'slug' => 'eliminar_usuario', 'descripcion' => 'Permite eliminar usuarios'],
-            ['nombre' => 'Ver Usuarios', 'slug' => 'ver_usuarios', 'descripcion' => 'Permite ver la lista de usuarios'],
-            ['nombre' => 'Crear Plan', 'slug' => 'crear_plan', 'descripcion' => 'Permite crear nuevos planes'],
-            ['nombre' => 'Editar Plan', 'slug' => 'editar_plan', 'descripcion' => 'Permite editar planes existentes'],
-            ['nombre' => 'Eliminar Plan', 'slug' => 'eliminar_plan', 'descripcion' => 'Permite eliminar planes'],
-            ['nombre' => 'Ver Planes', 'slug' => 'ver_planes', 'descripcion' => 'Permite ver la lista de planes'],
-            ['nombre' => 'Crear Cliente', 'slug' => 'crear_cliente', 'descripcion' => 'Permite crear nuevos clientes'],
-            ['nombre' => 'Editar Cliente', 'slug' => 'editar_cliente', 'descripcion' => 'Permite editar información de clientes'],
-            ['nombre' => 'Eliminar Cliente', 'slug' => 'eliminar_cliente', 'descripcion' => 'Permite eliminar clientes'],
-            ['nombre' => 'Ver Clientes', 'slug' => 'ver_clientes', 'descripcion' => 'Permite ver la lista de clientes'],
-            ['nombre' => 'Crear Factura', 'slug' => 'crear_factura', 'descripcion' => 'Permite crear nuevas facturas'],
-            ['nombre' => 'Editar Factura', 'slug' => 'editar_factura', 'descripcion' => 'Permite editar facturas'],
-            ['nombre' => 'Eliminar Factura', 'slug' => 'eliminar_factura', 'descripcion' => 'Permite eliminar facturas'],
-            ['nombre' => 'Ver Facturas', 'slug' => 'ver_facturas', 'descripcion' => 'Permite ver la lista de facturas'],
-            ['nombre' => 'Acceso Total', 'slug' => 'acceso_total', 'descripcion' => 'Acceso total al sistema'],
-        ];
+        $newSlugs = ['acceso_total'];
 
-        foreach ($permissions as $p) {
-            Permission::firstOrCreate(['slug' => $p['slug']], $p);
+        foreach (self::MODULES as $module) {
+            foreach ($module['actions'] as $action) {
+                $slug = "{$module['slug']}.{$action}";
+
+                Permission::firstOrCreate(
+                    ['slug' => $slug],
+                    [
+                        'nombre'      => "{$module['label']} — " . ucfirst($action),
+                        'descripcion' => "Permite {$action} en el módulo de {$module['label']}",
+                    ]
+                );
+
+                $newSlugs[] = $slug;
+            }
         }
 
-        $this->command->info('Permisos creados: ' . count($permissions));
+        // acceso_total is always kept
+        Permission::firstOrCreate(
+            ['slug' => 'acceso_total'],
+            ['nombre' => 'Acceso Total', 'descripcion' => 'Acceso completo a todo el sistema']
+        );
+
+        // Remove old-format permissions that are not in the new matrix AND have no roles assigned
+        $obsolete = Permission::whereNotIn('slug', $newSlugs)
+            ->withCount('roles')
+            ->get()
+            ->filter(fn ($p) => $p->roles_count === 0);
+
+        foreach ($obsolete as $p) {
+            $p->delete();
+        }
+
+        $this->command->info('Permisos sincronizados: ' . count($newSlugs));
+
+        if ($obsolete->count() > 0) {
+            $this->command->warn("Permisos obsoletos eliminados: {$obsolete->count()} (sin roles asignados)");
+        }
     }
 }

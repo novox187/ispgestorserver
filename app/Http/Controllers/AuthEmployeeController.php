@@ -57,8 +57,8 @@ class AuthEmployeeController extends Controller
             ]);
         }
 
-        // Cargar relación de rol
-        $authEmployee->load('role');
+        // Cargar rol con permisos para incluirlos en la respuesta
+        $authEmployee->load('role.permissions');
 
         $token = $authEmployee->createToken('employee-api')->plainTextToken;
         Log::info('Login empleado: éxito', [
@@ -67,15 +67,18 @@ class AuthEmployeeController extends Controller
             'ip' => $request->ip(),
         ]);
 
+        $permissions = $authEmployee->role?->permissions->pluck('slug')->all() ?? [];
+
         return response()->json([
             'token' => $token,
             'role' => 'employee',
             'employee' => [
-                'id' => $authEmployee->id,
-                'email' => $authEmployee->email,
-                'nombre' => $authEmployee->nombre,
-                'role' => $authEmployee->role ? $authEmployee->role->nombre : 'Sin Rol',
-                'role_slug' => $authEmployee->role ? $authEmployee->role->slug : null,
+                'id'          => $authEmployee->id,
+                'email'       => $authEmployee->email,
+                'nombre'      => $authEmployee->nombre,
+                'role'        => $authEmployee->role?->nombre ?? 'Sin Rol',
+                'role_slug'   => $authEmployee->role?->slug,
+                'permissions' => $permissions,
             ],
         ]);
     }

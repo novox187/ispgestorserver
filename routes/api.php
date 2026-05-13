@@ -15,6 +15,8 @@ use App\Http\Controllers\Admin\ClientController;
 use App\Http\Controllers\AuthEmployeeController;
 use App\Http\Controllers\Admin\PlanController as AdminPlanController;
 use App\Http\Controllers\Admin\EmployeeController as AdminEmployeeController;
+use App\Http\Controllers\Admin\RoleController as AdminRoleController;
+use App\Http\Controllers\Admin\PermissionController as AdminPermissionController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\InvoiceController as AdminInvoiceController;
 use App\Http\Controllers\Admin\TransactionController as AdminTransactionController;
@@ -44,28 +46,45 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
     Route::get('/dashboard/chart', [DashboardController::class, 'chart']);
 
     // Clientes
-    Route::get('/clientes/summary', [ClientController::class, 'listSummary']);
-    Route::get('/clientes/full/{id}', [ClientController::class, 'showFull']);
-    Route::post('/clientes/{id}/suspend', [ClientController::class, 'suspend']);
-    Route::post('/clientes/{id}/activate', [ClientController::class, 'activate']);
-    Route::post('/clientes/{id}/cancel', [ClientController::class, 'cancel']);
-    Route::put('/clientes/{id}', [ClientController::class, 'update']);
-    Route::post('/clientes/crear', [ClienteController::class, 'store']);
+    Route::get('/clientes/summary', [ClientController::class, 'listSummary'])->middleware('permission:clientes.ver');
+    Route::get('/clientes/full/{id}', [ClientController::class, 'showFull'])->middleware('permission:clientes.ver');
+    Route::post('/clientes/{id}/suspend', [ClientController::class, 'suspend'])->middleware('permission:clientes.editar');
+    Route::post('/clientes/{id}/activate', [ClientController::class, 'activate'])->middleware('permission:clientes.editar');
+    Route::post('/clientes/{id}/cancel', [ClientController::class, 'cancel'])->middleware('permission:clientes.editar');
+    Route::put('/clientes/{id}', [ClientController::class, 'update'])->middleware('permission:clientes.editar');
+    Route::post('/clientes/crear', [ClienteController::class, 'store'])->middleware('permission:clientes.crear');
 
     // Empleados
-    Route::get('/roles', [AdminEmployeeController::class, 'getRoles']);
-    Route::get('/employees', [AdminEmployeeController::class, 'listSummary']);
-    Route::get('/employees/show/{id}', [AdminEmployeeController::class, 'show']);
-    Route::post('/employees', [AdminEmployeeController::class, 'store']);
-    Route::put('/employees/{id}', [AdminEmployeeController::class, 'update']);
-    Route::delete('/employees/{id}', [AdminEmployeeController::class, 'destroy']);
+    Route::get('/employees', [AdminEmployeeController::class, 'index'])->middleware('permission:usuarios.ver');
+    Route::post('/employees', [AdminEmployeeController::class, 'store'])->middleware('permission:usuarios.crear');
+    Route::get('/employees/show/{id}', [AdminEmployeeController::class, 'show'])->middleware('permission:usuarios.ver');
+    Route::put('/employees/{id}', [AdminEmployeeController::class, 'update'])->middleware('permission:usuarios.editar');
+    Route::delete('/employees/{id}', [AdminEmployeeController::class, 'destroy'])->middleware('permission:usuarios.eliminar');
+    Route::post('/employees/{id}/restore', [AdminEmployeeController::class, 'restore'])->middleware('permission:usuarios.eliminar');
+    Route::delete('/employees/{id}/force', [AdminEmployeeController::class, 'forceDelete'])->middleware('super_admin');
+    Route::patch('/employees/{id}/toggle-status', [AdminEmployeeController::class, 'toggleStatus'])->middleware('permission:usuarios.editar');
+
+    // Roles — solo super_admin o acceso_total gestiona roles y permisos
+    Route::get('/roles', [AdminRoleController::class, 'index']);
+    Route::post('/roles', [AdminRoleController::class, 'store'])->middleware('super_admin');
+    Route::get('/roles/permissions', [AdminRoleController::class, 'permissions']);
+    Route::get('/roles/{id}', [AdminRoleController::class, 'show']);
+    Route::put('/roles/{id}', [AdminRoleController::class, 'update'])->middleware('super_admin');
+    Route::delete('/roles/{id}', [AdminRoleController::class, 'destroy'])->middleware('super_admin');
+    Route::post('/roles/{id}/permissions', [AdminRoleController::class, 'syncPermissions'])->middleware('super_admin');
+
+    // Permisos CRUD — solo super_admin
+    Route::get('/permissions', [AdminPermissionController::class, 'index']);
+    Route::post('/permissions', [AdminPermissionController::class, 'store'])->middleware('super_admin');
+    Route::put('/permissions/{id}', [AdminPermissionController::class, 'update'])->middleware('super_admin');
+    Route::delete('/permissions/{id}', [AdminPermissionController::class, 'destroy'])->middleware('super_admin');
 
     // Planes
-    Route::get('/planes/summary', [AdminPlanController::class, 'listSummary']);
-    Route::get('/plans', [AdminPlanController::class, 'index']);
-    Route::post('/planes', [AdminPlanController::class, 'store']);
-    Route::put('/planes/{id}', [AdminPlanController::class, 'update']);
-    Route::put('/planes/{id}/status', [AdminPlanController::class, 'setStatus']);
+    Route::get('/planes/summary', [AdminPlanController::class, 'listSummary'])->middleware('permission:planes.ver');
+    Route::get('/plans', [AdminPlanController::class, 'index'])->middleware('permission:planes.ver');
+    Route::post('/planes', [AdminPlanController::class, 'store'])->middleware('permission:planes.crear');
+    Route::put('/planes/{id}', [AdminPlanController::class, 'update'])->middleware('permission:planes.editar');
+    Route::put('/planes/{id}/status', [AdminPlanController::class, 'setStatus'])->middleware('permission:planes.editar');
 
     // Routers MikroTik
     Route::get('/mikrotik-routers', [MikrotikRouterController::class, 'index']);
@@ -91,17 +110,22 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
     Route::post('/isps/{ispId}/connections', [IspConnectionController::class, 'storeForIsp'])->middleware('super_admin');
 
     // Facturas Admin
-    Route::get('/invoices/config-check', [AdminInvoiceController::class, 'configCheck']);
-    Route::post('/invoices/generate-auto', [AdminInvoiceController::class, 'generateAuto']);
-    Route::post('/invoices/{invoice}/charge', [AdminInvoiceController::class, 'charge']);
-    Route::apiResource('/invoices', AdminInvoiceController::class);
+    Route::get('/invoices/config-check', [AdminInvoiceController::class, 'configCheck'])->middleware('permission:facturas.ver');
+    Route::post('/invoices/generate-auto', [AdminInvoiceController::class, 'generateAuto'])->middleware('permission:facturas.crear');
+    Route::post('/invoices/{invoice}/charge', [AdminInvoiceController::class, 'charge'])->middleware('permission:facturas.editar');
+    Route::get('/invoices', [AdminInvoiceController::class, 'index'])->middleware('permission:facturas.ver');
+    Route::get('/invoices/{invoice}', [AdminInvoiceController::class, 'show'])->middleware('permission:facturas.ver');
+    Route::post('/invoices', [AdminInvoiceController::class, 'store'])->middleware('permission:facturas.crear');
+    Route::put('/invoices/{invoice}', [AdminInvoiceController::class, 'update'])->middleware('permission:facturas.editar');
+    Route::patch('/invoices/{invoice}', [AdminInvoiceController::class, 'update'])->middleware('permission:facturas.editar');
+    Route::delete('/invoices/{invoice}', [AdminInvoiceController::class, 'destroy'])->middleware('permission:facturas.eliminar');
 
     // Configuraciones del sistema (solo admin)
-    Route::get('/settings', [AdminSettingController::class, 'index']);
-    Route::post('/settings', [AdminSettingController::class, 'store']);
-    Route::put('/settings/{setting}', [AdminSettingController::class, 'update']);
-    Route::delete('/settings/{setting}', [AdminSettingController::class, 'destroy']);
-    Route::put('/settings', [AdminSettingController::class, 'bulkUpdate']);
+    Route::get('/settings', [AdminSettingController::class, 'index'])->middleware('permission:configuracion.ver');
+    Route::post('/settings', [AdminSettingController::class, 'store'])->middleware('permission:configuracion.gestionar');
+    Route::put('/settings/{setting}', [AdminSettingController::class, 'update'])->middleware('permission:configuracion.gestionar');
+    Route::delete('/settings/{setting}', [AdminSettingController::class, 'destroy'])->middleware('permission:configuracion.gestionar');
+    Route::put('/settings', [AdminSettingController::class, 'bulkUpdate'])->middleware('permission:configuracion.gestionar');
 
     // Importaciones
     Route::get('/import/template/{table}', [App\Http\Controllers\Admin\ImportController::class, 'downloadTemplate']);
@@ -114,13 +138,13 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
     Route::post('/clientes/{id}/add-funds', [AdminTransactionController::class, 'addFunds']);
 
     // ── Chat Admin ───────────────────────────────────────────────────────────
-    Route::prefix('chat')->group(function () {
+    Route::prefix('chat')->middleware('permission:soporte.ver')->group(function () {
         Route::get('/conversations', [AdminChatController::class, 'conversations']);
         Route::get('/client/{clientId}/events', [AdminChatController::class, 'clientEvents']);
         Route::get('/{ticketId}/messages', [AdminChatController::class, 'messages']);
-        Route::post('/{ticketId}/messages', [AdminChatController::class, 'store']);
-        Route::put('/{ticketId}/assign', [AdminChatController::class, 'assign']);
-        Route::put('/{ticketId}/status', [AdminChatController::class, 'updateStatus']);
+        Route::post('/{ticketId}/messages', [AdminChatController::class, 'store'])->middleware('permission:soporte.gestionar');
+        Route::put('/{ticketId}/assign', [AdminChatController::class, 'assign'])->middleware('permission:soporte.gestionar');
+        Route::put('/{ticketId}/status', [AdminChatController::class, 'updateStatus'])->middleware('permission:soporte.gestionar');
     });
 });
 
@@ -192,7 +216,7 @@ Route::post('messages', [MessageController::class, 'store'])->middleware('auth:s
 
 // Ticket activo del cliente
 Route::get('/ticket/active', function (Request $request) {
-    $user = auth()->user();
+    $user = $request->user();
     $ticket = \App\Models\Ticket::where('client_id', $user->id)->latest()->first();
     if (!$ticket) return response()->json(null);
     return response()->json([
@@ -209,7 +233,7 @@ Route::post('/ticket/{ticketId}/rate', function (Request $request, int $ticketId
         'rating' => 'required|integer|min:1|max:5',
         'review' => 'nullable|string|max:1000',
     ]);
-    $user = auth()->user();
+    $user = $request->user();
     $ticket = \App\Models\Ticket::where('id', $ticketId)
         ->where('client_id', $user->id)
         ->where('status', 'closed')

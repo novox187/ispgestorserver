@@ -624,7 +624,17 @@ El sistema incluye un esquema de roles y permisos:
 Employee ── belongs to ── Role ── has many ── Permission
 ```
 
-El middleware `EnsureEmployeeSuperAdmin` protege rutas que requieren el rol de Super Admin (gestión de empleados, configuraciones del sistema).
+Los permisos usan el formato `módulo.acción` (ej. `usuarios.crear`, `clientes.ver`) y son generados automáticamente desde la constante `MODULES` en `PermissionSeeder`.
+
+El middleware `permission:{slug}` (clase `CheckPermission`) protege rutas individualmente. Los roles `super_admin` y el permiso `acceso_total` omiten todos los checks.
+
+**Ver [`PERMISOS.md`](./PERMISOS.md) para la guía completa de cómo agregar nuevos módulos, acciones o proteger rutas.**
+
+Para sincronizar la base de datos con la matriz de permisos:
+
+```bash
+php artisan db:seed --class=PermissionSeeder
+```
 
 ### Guards configurados
 
