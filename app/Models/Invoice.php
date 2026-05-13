@@ -2,10 +2,11 @@
 
 namespace App\Models;
 
+use App\Models\Setting;
+use App\Traits\Auditable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use App\Traits\Auditable;
 
 class Invoice extends Model
 {
@@ -143,19 +144,32 @@ class Invoice extends Model
     }
 
     /**
-     * Generar número de factura único
+     * Generar número de factura secuencial en formato SRI Ecuador: 001-001-000000001
+     * El secuencial es estrictamente creciente por combinación establecimiento+emisión.
      */
     public static function generateInvoiceNumber(): string
     {
-        $year = now()->year;
-        $month = now()->format('m');
+        $estCode = str_pad(
+            Setting::where('key', 'sri_establishment_code')->value('value') ?? '001',
+            3, '0', STR_PAD_LEFT
+        );
+        $emiCode = str_pad(
+            Setting::where('key', 'sri_emission_point')->value('value') ?? '001',
+            3, '0', STR_PAD_LEFT
+        );
 
-        do {
-            $sequence = str_pad(rand(1, 9999), 4, '0', STR_PAD_LEFT);
-            $invoiceNumber = "FACT-{$year}{$month}-{$sequence}";
-        } while (self::where('invoice_number', $invoiceNumber)->exists());
+        $prefix = "{$estCode}-{$emiCode}-";
 
-        return $invoiceNumber;
+        $last = self::withTrashed()
+            ->where('invoice_number', 'like', $prefix . '%')
+            ->orderByDesc('invoice_number')
+            ->value('invoice_number');
+
+        $nextSeq = $last
+            ? ((int) substr($last, strlen($prefix))) + 1
+            : 1;
+
+        return $prefix . str_pad($nextSeq, 9, '0', STR_PAD_LEFT);
     }
 
     /**

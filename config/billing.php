@@ -15,7 +15,7 @@ return [
     | Timezone del scheduler
     |--------------------------------------------------------------------------
     */
-    'timezone' => env('BILLING_TIMEZONE', 'America/Bogota'),
+    'timezone' => env('BILLING_TIMEZONE', 'America/Guayaquil'),
 
     /*
     |--------------------------------------------------------------------------

@@ -18,14 +18,14 @@ class InvoiceConfigValidator
     public const REQUIRED = [
         'issuer' => [
             'issuer_name'    => 'Razón social del emisor',
-            'issuer_nit'     => 'NIT / Identificación fiscal',
+            'issuer_ruc'     => 'RUC / Identificación fiscal (13 dígitos)',
             'issuer_address' => 'Dirección fiscal',
             'issuer_city'    => 'Ciudad del emisor',
             'issuer_country' => 'País del emisor',
             'issuer_email'   => 'Correo de facturación',
         ],
         'tax' => [
-            'tax_rate' => 'Tasa de impuesto',
+            'tax_rate' => 'Tasa de IVA',
             'tax_name' => 'Nombre del impuesto',
         ],
         'currency' => [
@@ -33,17 +33,14 @@ class InvoiceConfigValidator
             'currency_symbol' => 'Símbolo de moneda',
         ],
         'legal' => [
-            'invoice_resolution_number' => 'Número de resolución',
-            'invoice_resolution_date'   => 'Fecha de resolución',
+            'sri_establishment_code' => 'Código de establecimiento SRI (3 dígitos)',
+            'sri_emission_point'     => 'Código del punto de emisión SRI (3 dígitos)',
         ],
     ];
 
     // ── Business rules applied after presence check ───────────────────────────
 
-    /** tax_rate must be a number between 0 and 1 (exclusive upper). */
     private const TAX_RATE_MAX = 1.0;
-
-    /** invoice_resolution_date must not be in the future (it's a grant date). */
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -77,7 +74,7 @@ class InvoiceConfigValidator
                 }
 
                 // 2. Business-rule checks
-                $reason = $this->businessRule($group, $key, $value);
+                $reason = $this->businessRule($key, $value);
                 if ($reason !== null) {
                     $invalid[$group][$key] = $reason;
                 }
@@ -115,13 +112,15 @@ class InvoiceConfigValidator
 
     // ── Internals ─────────────────────────────────────────────────────────────
 
-    private function businessRule(string $group, string $key, string $value): ?string
+    private function businessRule(string $key, string $value): ?string
     {
         return match ($key) {
-            'tax_rate' => $this->validateTaxRate($value),
-            'invoice_resolution_date' => $this->validateResolutionDate($value),
-            'issuer_email' => $this->validateEmail($value),
-            default => null,
+            'tax_rate'               => $this->validateTaxRate($value),
+            'issuer_email'           => $this->validateEmail($value),
+            'issuer_ruc'             => $this->validateRuc($value),
+            'sri_establishment_code',
+            'sri_emission_point'     => $this->validateSriCode($value),
+            default                  => null,
         };
     }
 
@@ -129,23 +128,52 @@ class InvoiceConfigValidator
     {
         $rate = filter_var($value, FILTER_VALIDATE_FLOAT);
         if ($rate === false) {
-            return 'Debe ser un número decimal (ej: 0.15)';
+            return 'Debe ser un número decimal (ej: 0.15 para 15%)';
         }
         if ($rate < 0 || $rate >= self::TAX_RATE_MAX) {
-            return "Debe estar entre 0 y " . self::TAX_RATE_MAX . " (exclusivo). Valor actual: {$value}";
+            return 'Debe estar entre 0 y ' . self::TAX_RATE_MAX . ' (exclusivo). Valor actual: ' . $value;
         }
         return null;
     }
 
-    private function validateResolutionDate(string $value): ?string
+    /**
+     * Valida el RUC ecuatoriano:
+     * - Exactamente 13 dígitos numéricos
+     * - Primeros 2 dígitos: código de provincia (01–24)
+     * - Últimos 3 dígitos (código de establecimiento): no pueden ser 000
+     */
+    private function validateRuc(string $value): ?string
     {
-        $date = \DateTime::createFromFormat('Y-m-d', $value);
-        if (!$date || $date->format('Y-m-d') !== $value) {
-            return "Formato inválido. Use YYYY-MM-DD. Valor actual: {$value}";
+        $clean = preg_replace('/\D/', '', $value);
+
+        if (strlen($clean) !== 13) {
+            return 'El RUC debe tener exactamente 13 dígitos numéricos. Actual: ' . strlen($clean) . ' dígito(s).';
         }
-        // Resolution dates should not be in the future (they are official grants)
-        if ($date > new \DateTime('today')) {
-            return "La fecha de resolución no puede ser futura. Valor actual: {$value}";
+
+        $province = (int) substr($clean, 0, 2);
+        if ($province < 1 || $province > 24) {
+            return 'Los primeros 2 dígitos deben ser un código de provincia ecuatoriana (01-24). Actual: ' . substr($clean, 0, 2);
+        }
+
+        if (substr($clean, 10, 3) === '000') {
+            return 'Los últimos 3 dígitos (código de establecimiento) no pueden ser 000.';
+        }
+
+        return null;
+    }
+
+    /**
+     * Valida el código de establecimiento o punto de emisión SRI:
+     * - Exactamente 3 dígitos numéricos
+     * - No puede ser 000
+     */
+    private function validateSriCode(string $value): ?string
+    {
+        if (!preg_match('/^\d{3}$/', $value)) {
+            return 'Debe ser exactamente 3 dígitos numéricos (ej: 001). Valor actual: ' . $value;
+        }
+        if ($value === '000') {
+            return 'El código no puede ser 000. Use 001 o superior.';
         }
         return null;
     }
@@ -153,7 +181,7 @@ class InvoiceConfigValidator
     private function validateEmail(string $value): ?string
     {
         if (!filter_var($value, FILTER_VALIDATE_EMAIL)) {
-            return "Correo electrónico inválido. Valor actual: {$value}";
+            return 'Correo electrónico inválido. Valor actual: ' . $value;
         }
         return null;
     }

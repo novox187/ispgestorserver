@@ -227,7 +227,7 @@ MIKROTIK_DELAY=1
 
 ```env
 BILLING_SUSPENSION_GRACE_DAYS=3               # Días de gracia antes de suspender
-BILLING_TIMEZONE=America/Bogota               # Zona horaria para los schedulers
+BILLING_TIMEZONE=America/Guayaquil           # Zona horaria Ecuador (UTC-5, sin DST)
 BILLING_SCHEDULE_INVOICE_DAY=1                # Día del mes para generar facturas
 BILLING_SCHEDULE_INVOICE_TIME=00:05           # Hora de generación de facturas
 BILLING_SCHEDULE_PAYMENTS_TIME=02:00          # Hora de procesamiento de pagos
@@ -774,6 +774,86 @@ CheckAndReactivate (10:00)
    │  → Paga la factura pendiente
    │  → Restaura servicio en DB + notifica a MikroTik
 ```
+
+---
+
+## Facturación Ecuador — Cumplimiento SRI
+
+El sistema está adaptado para cumplir la normativa tributaria de Ecuador administrada por el **SRI (Servicio de Rentas Internas)**.
+
+### Marco legal
+
+| Regulación | Descripción |
+|---|---|
+| **Ley de Régimen Tributario Interno (LRTI)** | Arts. 52-67 rigen el IVA |
+| **Decreto Ejecutivo 470** (4 dic 2024) | Fija IVA en 15% |
+| **Circular NAC-DGECCGC25-00000006** (26 dic 2025) | Confirma 15% para 2026 |
+| **Reglamento de Comprobantes de Venta** | Rige el formato y numeración de facturas |
+| **ARCOTEL Resolución 2018-0716** | Normas de facturación para ISPs/telecomunicaciones |
+
+### Parámetros fiscales Ecuador
+
+| Campo | Valor | Descripción |
+|---|---|---|
+| Autoridad tributaria | SRI | Servicio de Rentas Internas |
+| ID tributario | RUC | 13 dígitos numéricos |
+| IVA vigente | 15% (`0.15`) | Confirmado para 2026 |
+| Moneda | USD | Ecuador dolarizado desde 2000 |
+| Zona horaria | `America/Guayaquil` | UTC-5, sin horario de verano |
+| Formato factura | `001-001-000000001` | EEE-PPP-SSSSSSSSS (SRI) |
+| Numeración | Secuencial estricta | Sin saltos ni reinicios por periodo |
+
+### Configuración en base de datos (`system_settings`)
+
+Los parámetros se editan desde el panel admin en `/configuraciones/facturacion`. Claves clave:
+
+| Clave | Grupo | Descripción | Ejemplo |
+|---|---|---|---|
+| `issuer_ruc` | issuer | RUC del emisor (13 dígitos) | `1790123456001` |
+| `sri_establishment_code` | legal | Código de establecimiento SRI | `001` |
+| `sri_emission_point` | legal | Código del punto de emisión SRI | `001` |
+| `currency_code` | currency | Código ISO moneda | `USD` |
+| `tax_rate` | tax | Tasa IVA en decimal | `0.15` |
+
+### Formato y numeración de facturas
+
+Las facturas se generan con el formato exigido por el SRI:
+
+```
+{sri_establishment_code}-{sri_emission_point}-{SSSSSSSSS}
+
+Ejemplo: 001-001-000000001
+         ─── ─── ─────────
+          ↑   ↑       ↑
+        Est. Pto.  Secuencial
+                    9 dígitos
+```
+
+El secuencial es **estrictamente creciente** por combinación establecimiento+emisión y **nunca se resetea**. No elimine facturas físicamente — use soft delete o cancelación.
+
+### Validación del RUC
+
+El servicio `InvoiceConfigValidator` verifica:
+- Exactamente 13 dígitos numéricos
+- Dígitos 1-2: código de provincia (01-24)
+- Dígitos 11-13: código de establecimiento, distinto de `000`
+
+### Re-ejecutar la configuración inicial de Ecuador
+
+```bash
+# Limpia claves de Colombia y crea las de Ecuador
+php artisan db:seed --class=SystemSettingsSeeder
+```
+
+### Migración desde Colombia
+
+Si el sistema fue configurado para Colombia, el seeder limpia automáticamente:
+
+| Clave eliminada | Reemplazada por |
+|---|---|
+| `issuer_nit` | `issuer_ruc` |
+| `invoice_resolution_number` | `sri_establishment_code` |
+| `invoice_resolution_date` | `sri_emission_point` |
 
 ---
 
