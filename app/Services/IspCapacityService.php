@@ -119,6 +119,40 @@ class IspCapacityService
         return max(0.0, $after - $before);
     }
 
+    /**
+     * Evalúa la capacidad disponible del plan específico para agregar un cliente más.
+     * Solo considera los clientes activos del plan y su propio ancho de banda configurado,
+     * sin tomar en cuenta las megas físicas globales del ISP.
+     */
+    public function getPlanCapacity(Plan $plan): array
+    {
+        $reuse = $this->getPlanReuseRatio($plan);
+        $countActive = (int) ClientPlan::query()
+            ->where('plan_id', $plan->id)
+            ->where('status', 'active')
+            ->count();
+
+        $planDownMbps = (float) $plan->download_speed;
+        $planUpMbps = (float) $plan->upload_speed;
+
+        $expectedUsedDown = $this->calculateParentMbps($planDownMbps, $countActive, $reuse);
+        $deltaDown = $this->calculateNextClientDeltaMbps($planDownMbps, $countActive, $reuse);
+        $remainingDownInPlan = max(0.0, $planDownMbps - $expectedUsedDown);
+
+        $hasCapacity = ($deltaDown <= 0.0) || ($remainingDownInPlan >= $deltaDown);
+
+        return [
+            'plan_down_mbps'            => $planDownMbps,
+            'plan_up_mbps'              => $planUpMbps,
+            'active_clients'            => $countActive,
+            'reuse_ratio'               => $reuse,
+            'expected_used_down_mbps'   => $expectedUsedDown,
+            'remaining_down_in_plan_mbps' => $remainingDownInPlan,
+            'delta_down_mbps'           => $deltaDown,
+            'has_capacity'              => $hasCapacity,
+        ];
+    }
+
     public function getPlanActiveClientCounts(): array
     {
         try {

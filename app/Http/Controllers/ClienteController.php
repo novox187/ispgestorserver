@@ -87,20 +87,13 @@ class ClienteController extends Controller
             }
 
             if ($plan) {
-                $reuse = $this->capacity->getPlanReuseRatio($plan);
-                $snapshot = $this->capacity->getCapacitySnapshot();
-                $remaining = (float) ($snapshot['remaining_down_mbps'] ?? 0);
-                $countBefore = (int) ClientPlan::query()
-                    ->where('plan_id', $plan->id)
-                    ->where('status', 'active')
-                    ->count();
-                $delta = $this->capacity->calculateNextClientDeltaMbps((float) $plan->download_speed, $countBefore, $reuse);
-                if ($delta > 0 && $remaining < $delta) {
+                $planCapacity = $this->capacity->getPlanCapacity($plan);
+                if (!$planCapacity['has_capacity']) {
                     return response()->json([
                         'success' => false,
-                        'code' => 'ISP_CAPACITY_EXHAUSTED',
-                        'message' => 'Capacidad de ISP agotada',
-                        'capacity' => $snapshot,
+                        'code' => 'PLAN_CAPACITY_EXHAUSTED',
+                        'message' => 'El plan no tiene capacidad disponible para nuevos clientes',
+                        'plan_capacity' => $planCapacity,
                     ], 409);
                 }
             }
