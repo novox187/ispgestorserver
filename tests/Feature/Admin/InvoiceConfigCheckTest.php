@@ -15,18 +15,18 @@ uses(RefreshDatabase::class);
 function seedFullConfig(): void
 {
     $rows = [
-        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_name',               'value' => 'Iron Link S.A.S.', 'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_nit',                'value' => '900.1',            'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_address',            'value' => 'Calle 1',          'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_city',               'value' => 'Bogotá',           'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_country',            'value' => 'Colombia',         'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_email',              'value' => 'a@ironlink.com',   'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'tax',      'key' => 'tax_rate',                  'value' => '0.15',             'data_type' => 'float',   'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'tax',      'key' => 'tax_name',                  'value' => 'IVA',              'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'currency', 'key' => 'currency_code',             'value' => 'COP',              'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'currency', 'key' => 'currency_symbol',           'value' => '$',                'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'legal',    'key' => 'invoice_resolution_number', 'value' => '18764000001',      'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'legal',    'key' => 'invoice_resolution_date',   'value' => '2024-01-01',       'data_type' => 'string',  'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_name',            'value' => 'Iron Link S.A.S.', 'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_ruc',             'value' => '0100000000001',    'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_address',         'value' => 'Calle 1',          'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_city',            'value' => 'Quito',            'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_country',         'value' => 'Ecuador',          'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_email',           'value' => 'a@ironlink.com',   'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'tax',      'key' => 'tax_rate',               'value' => '0.15',             'data_type' => 'float',  'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'tax',      'key' => 'tax_name',               'value' => 'IVA',              'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'currency', 'key' => 'currency_code',          'value' => 'USD',              'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'currency', 'key' => 'currency_symbol',        'value' => '$',                'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'legal',    'key' => 'sri_establishment_code', 'value' => '001',              'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'legal',    'key' => 'sri_emission_point',     'value' => '001',              'data_type' => 'string', 'is_public' => true],
     ];
     foreach ($rows as $row) {
         Setting::create(array_merge($row, ['description' => '']));

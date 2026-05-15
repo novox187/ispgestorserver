@@ -86,6 +86,64 @@ class InvoiceController extends Controller
     }
 
     /**
+     * Generar facturas por cliente, ancladas a la fecha de contrato.
+     * Devuelve un reporte detallado con clientes procesados, facturas creadas,
+     * omitidas (ya existentes) y errores (si se abortó por fallo).
+     */
+    public function generateByContract(AutoBillingService $billingService, InvoiceConfigValidator $validator)
+    {
+        $check = $validator->validate();
+        if (!$check['valid']) {
+            $employee = auth()->user();
+            Log::channel('billing')->warning('Generación por contrato bloqueada: configuración incompleta', [
+                'employee_id'   => $employee?->id,
+                'employee_name' => $employee?->name,
+                'missing'       => $check['missing'],
+                'invalid'       => $check['invalid'],
+                'timestamp'     => now()->toIso8601String(),
+            ]);
+
+            return response()->json([
+                'error'      => 'No es posible generar facturas. Debe configurar previamente los parámetros de facturación.',
+                'valid'      => false,
+                'missing'    => $check['missing'],
+                'invalid'    => $check['invalid'],
+                'messages'   => $check['messages'],
+                'config_url' => '/configuraciones/facturacion',
+            ], 422);
+        }
+
+        try {
+            $report = $billingService->generateInvoicesByContractDate();
+
+            $status = $report['aborted'] ? 207 : 200;
+            $message = $report['aborted']
+                ? 'El proceso se detuvo por un error. Revise el reporte de actividad.'
+                : 'Facturas por contrato generadas correctamente.';
+
+            return response()->json([
+                'message' => $message,
+                'count'   => $report['generated_count'],
+                'report'  => $report,
+            ], $status);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'error'      => 'No es posible generar facturas. Debe configurar previamente los parámetros de facturación.',
+                'details'    => $e->errors(),
+                'config_url' => '/configuraciones/facturacion',
+            ], 422);
+        } catch (\Throwable $e) {
+            Log::channel('billing')->error('Error inesperado en generación por contrato', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return response()->json([
+                'error' => 'Error al generar facturas por contrato: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Listar facturas con filtros y paginación
      */
     public function index(Request $request)

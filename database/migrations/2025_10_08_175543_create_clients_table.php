@@ -20,7 +20,7 @@ return new class extends Migration
             $table->string('password');
             $table->text('installation_address');
             $table->string('gps_coordinates', 50)->nullable();
-            $table->date('contract_date');
+            $table->date('contract_date')->nullable();
             $table->enum('service_status', ['ACTIVE', 'LIMITED', 'SUSPENDED', 'CANCELLED'])->default('ACTIVE');
             $table->string('ip', 45)->default('0.0.0.0'); 
             $table->text('observations')->nullable();

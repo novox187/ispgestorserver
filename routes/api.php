@@ -112,6 +112,7 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
     // Facturas Admin
     Route::get('/invoices/config-check', [AdminInvoiceController::class, 'configCheck'])->middleware('permission:facturas.ver');
     Route::post('/invoices/generate-auto', [AdminInvoiceController::class, 'generateAuto'])->middleware('permission:facturas.crear');
+    Route::post('/invoices/generate-by-contract', [AdminInvoiceController::class, 'generateByContract'])->middleware('permission:facturas.crear');
     Route::post('/invoices/{invoice}/charge', [AdminInvoiceController::class, 'charge'])->middleware('permission:facturas.editar');
     Route::get('/invoices', [AdminInvoiceController::class, 'index'])->middleware('permission:facturas.ver');
     Route::get('/invoices/{invoice}', [AdminInvoiceController::class, 'show'])->middleware('permission:facturas.ver');
