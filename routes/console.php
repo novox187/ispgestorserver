@@ -2,8 +2,36 @@
 
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Schedule;
+use App\Jobs\ProcessClientSuspension;
+use App\Jobs\GenerateMonthlyInvoices;
+use App\Jobs\SyncMikroTikQueues;
 use App\Services\MikroTikQueueSyncService;
 use App\Services\MikroTikService;
+
+// ─── Scheduler ───────────────────────────────────────────────────────────────
+// En testing (SCHEDULE_TEST_MODE=true) todos los jobs corren cada 5 minutos.
+// En producción corren en sus horarios reales.
+
+$testMode = (bool) env('SCHEDULE_TEST_MODE', false);
+
+Schedule::job(new ProcessClientSuspension(), 'suspensions')
+    ->when($testMode)->everyFiveMinutes()
+    ->unless($testMode)->dailyAt('02:00')
+    ->withoutOverlapping()
+    ->onOneServer();
+
+Schedule::job(new GenerateMonthlyInvoices(), 'default')
+    ->when($testMode)->everyFiveMinutes()
+    ->unless($testMode)->monthlyOn(1, '01:00')
+    ->withoutOverlapping()
+    ->onOneServer();
+
+Schedule::job(new SyncMikroTikQueues(), 'default')
+    ->when($testMode)->everyFiveMinutes()
+    ->unless($testMode)->everyThirtyMinutes()
+    ->withoutOverlapping()
+    ->onOneServer();
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
