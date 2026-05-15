@@ -27,6 +27,7 @@ use App\Http\Controllers\Admin\MikrotikRouterController;
 use App\Http\Controllers\FirewallController;
 use App\Http\Controllers\SettingController;
 use App\Http\Controllers\Admin\SettingController as AdminSettingController;
+use App\Http\Controllers\Admin\AutomationController as AdminAutomationController;
 
 // ── Broadcasting Auth (Reverb / Pusher) ──────────────────────────────────────
 // Acepta tokens de cliente Y de empleado a través de auth:sanctum
@@ -120,6 +121,13 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
     Route::put('/invoices/{invoice}', [AdminInvoiceController::class, 'update'])->middleware('permission:facturas.editar');
     Route::patch('/invoices/{invoice}', [AdminInvoiceController::class, 'update'])->middleware('permission:facturas.editar');
     Route::delete('/invoices/{invoice}', [AdminInvoiceController::class, 'destroy'])->middleware('permission:facturas.eliminar');
+
+    // Automatizaciones (workers, schedulers)
+    Route::get('/automations', [AdminAutomationController::class, 'index'])->middleware('permission:configuracion.ver');
+    Route::get('/automations/{key}', [AdminAutomationController::class, 'show'])->middleware('permission:configuracion.ver');
+    Route::put('/automations/{key}', [AdminAutomationController::class, 'update'])->middleware('permission:configuracion.gestionar');
+    Route::get('/automations/{key}/audits', [AdminAutomationController::class, 'audits'])->middleware('permission:configuracion.ver');
+    Route::post('/automations/{key}/run-now', [AdminAutomationController::class, 'runNow'])->middleware('permission:configuracion.gestionar');
 
     // Configuraciones del sistema (solo admin)
     Route::get('/settings', [AdminSettingController::class, 'index'])->middleware('permission:configuracion.ver');

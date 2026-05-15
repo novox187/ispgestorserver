@@ -39,6 +39,9 @@ class DatabaseSeeder extends Seeder
 
             // 7. Configuraciones del sistema
             SystemSettingsSeeder::class,
+
+            // 8. Automatizaciones (workers/schedulers)
+            AutomationSettingsSeeder::class,
         ]);
 
         $this->command->info('¡Base de datos poblada completamente!');

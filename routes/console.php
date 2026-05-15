@@ -1,28 +1,21 @@
 <?php
 
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
-use Illuminate\Support\Facades\Schedule;
-use App\Jobs\ProcessClientSuspension;
-use App\Jobs\GenerateMonthlyInvoices;
-use App\Jobs\SyncMikroTikQueues;
+use Illuminate\Support\Facades\Schema;
+use App\Services\AutomationSettingsService;
 use App\Services\MikroTikQueueSyncService;
 use App\Services\MikroTikService;
 
-// ─── Scheduler ───────────────────────────────────────────────────────────────
-// En testing (SCHEDULE_TEST_MODE=true) todos los jobs corren cada 5 minutos.
-// En producción corren en sus horarios reales.
+// ─── Scheduler dinámico ──────────────────────────────────────────────────────
+// Todas las automatizaciones se leen desde la tabla `automation_settings`.
+// SCHEDULE_TEST_MODE=true fuerza todas a correr cada 5 min (override global).
+// La verificación de Schema evita explotar antes de correr migrations.
 
-$testMode = (bool) env('SCHEDULE_TEST_MODE', false);
-
-if ($testMode) {
-    Schedule::job(new ProcessClientSuspension(), 'suspensions')->everyFiveMinutes()->withoutOverlapping()->onOneServer();
-    Schedule::job(new GenerateMonthlyInvoices(), 'default')->everyFiveMinutes()->withoutOverlapping()->onOneServer();
-    Schedule::job(new SyncMikroTikQueues(), 'default')->everyFiveMinutes()->withoutOverlapping()->onOneServer();
-} else {
-    Schedule::job(new ProcessClientSuspension(), 'suspensions')->dailyAt('02:00')->withoutOverlapping()->onOneServer();
-    Schedule::job(new GenerateMonthlyInvoices(), 'default')->monthlyOn(1, '01:00')->withoutOverlapping()->onOneServer();
-    Schedule::job(new SyncMikroTikQueues(), 'default')->everyThirtyMinutes()->withoutOverlapping()->onOneServer();
+if (Schema::hasTable('automation_settings')) {
+    $testMode = (bool) env('SCHEDULE_TEST_MODE', false);
+    app(AutomationSettingsService::class)->applySchedule(app(Schedule::class), $testMode);
 }
 
 Artisan::command('inspire', function () {

@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Models\AutomationSetting;
 use App\Models\Invoice;
 use App\Services\AutoBillingService;
 use App\Services\ClientSuspensionService;
@@ -27,7 +28,17 @@ class ProcessClientSuspension implements ShouldQueue
 
     public function handle(ClientSuspensionService $suspension, AutoBillingService $billing): void
     {
-        $graceDays = config('billing.suspension_grace_days');
+        $graceDays = (int) AutomationSetting::getParam(
+            'client_suspension',
+            'grace_days',
+            config('billing.suspension_grace_days', 3)
+        );
+
+        // updateQuietly evita generar entradas de auditoría por cada ejecución del job
+        $automation = AutomationSetting::getCached('client_suspension');
+        if ($automation) {
+            $automation->updateQuietly(['last_run_at' => now()]);
+        }
 
         $overdueInvoices = Invoice::with(['client.wallet'])
             ->where('status', Invoice::STATUS_FAILED)
