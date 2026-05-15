@@ -77,11 +77,12 @@ describe('POST /admin/invoices/generate-by-contract', function () {
         expect(Invoice::count())->toBe(0);
     });
 
-    it('genera una factura para un cliente sin facturas previas, anclada al día del contrato', function () {
+    it('genera todos los ciclos retroactivos desde contract_date hasta hoy para un cliente sin facturas previas', function () {
         seedBillingConfig();
         Carbon::setTestNow(Carbon::parse('2026-05-20'));
 
-        [$client, $plan, $cp] = makeClientWithContractDate('2024-01-15', 100);
+        // contract = 2026-02-15 → ciclos: feb 15, mar 15, abr 15, may 15 = 4 ciclos
+        [$client, $plan, $cp] = makeClientWithContractDate('2026-02-15', 100);
 
         $res = $this->actingAs(makeAuthorizedEmployee(), 'sanctum')
             ->postJson('/api/admin/invoices/generate-by-contract');
@@ -92,59 +93,68 @@ describe('POST /admin/invoices/generate-by-contract', function () {
                 'processed_clients', 'generated', 'skipped', 'errors',
             ]]);
 
-        expect($res->json('count'))->toBe(1);
-        expect(Invoice::count())->toBe(1);
+        expect($res->json('count'))->toBe(4);
+        expect(Invoice::count())->toBe(4);
 
-        $invoice = Invoice::first();
-        expect($invoice->client_id)->toBe($client->id);
-        expect($invoice->client_plan_id)->toBe($cp->id);
-        expect($invoice->issue_date->toDateString())->toBe('2026-05-15');
-        expect((float) $invoice->amount)->toBe(100.0);
-        expect((float) $invoice->tax_amount)->toBe(15.0);
-        expect((float) $invoice->total_amount)->toBe(115.0);
-        expect($invoice->metadata['billing_cycle'])->toBe('contract_based');
-        expect($invoice->metadata['contract_date'])->toBe('2024-01-15');
-        expect($invoice->metadata['cycle_start'])->toBe('2026-05-15');
+        $invoices = Invoice::orderBy('issue_date')->get();
+        expect($invoices->pluck('issue_date')->map->toDateString()->all())->toBe([
+            '2026-02-15', '2026-03-15', '2026-04-15', '2026-05-15',
+        ]);
+
+        $first = $invoices->first();
+        expect($first->client_id)->toBe($client->id);
+        expect($first->client_plan_id)->toBe($cp->id);
+        expect((float) $first->amount)->toBe(100.0);
+        expect((float) $first->tax_amount)->toBe(15.0);
+        expect((float) $first->total_amount)->toBe(115.0);
+        expect($first->metadata['billing_cycle'])->toBe('contract_based');
+        expect($first->metadata['contract_date'])->toBe('2026-02-15');
+        expect($first->metadata['cycle_start'])->toBe('2026-02-15');
 
         Carbon::setTestNow();
     });
 
-    it('si el aniversario aún no ocurrió este mes, ancla al aniversario del mes anterior', function () {
+    it('si el aniversario aún no ocurrió este mes, no genera el ciclo del mes corriente', function () {
         seedBillingConfig();
         Carbon::setTestNow(Carbon::parse('2026-05-10'));
 
-        [, , $cp] = makeClientWithContractDate('2024-01-15', 80);
+        // contract = 2026-02-15, hoy = mayo 10 (antes del aniversario de mayo)
+        // Ciclos generados: feb 15, mar 15, abr 15 = 3 (mayo NO porque 15 > hoy)
+        [, , $cp] = makeClientWithContractDate('2026-02-15', 80);
 
         $this->actingAs(makeAuthorizedEmployee(), 'sanctum')
             ->postJson('/api/admin/invoices/generate-by-contract')
             ->assertStatus(200);
 
-        $invoice = Invoice::first();
-        expect($invoice->issue_date->toDateString())->toBe('2026-04-15');
-        expect($invoice->client_plan_id)->toBe($cp->id);
+        expect(Invoice::count())->toBe(3);
+
+        $lastInvoice = Invoice::orderBy('issue_date', 'desc')->first();
+        expect($lastInvoice->issue_date->toDateString())->toBe('2026-04-15');
+        expect($lastInvoice->client_plan_id)->toBe($cp->id);
 
         Carbon::setTestNow();
     });
 
-    it('no genera duplicados al ejecutar dos veces sobre el mismo ciclo', function () {
+    it('no genera duplicados al ejecutar dos veces (todos los ciclos quedan omitidos en la segunda corrida)', function () {
         seedBillingConfig();
         Carbon::setTestNow(Carbon::parse('2026-05-20'));
 
-        makeClientWithContractDate('2024-01-15', 100);
+        // contract = 2026-04-15 → ciclos: abr 15, may 15 = 2
+        makeClientWithContractDate('2026-04-15', 100);
 
         $employee = makeAuthorizedEmployee();
 
         $r1 = $this->actingAs($employee, 'sanctum')
             ->postJson('/api/admin/invoices/generate-by-contract');
         $r1->assertStatus(200);
-        expect($r1->json('count'))->toBe(1);
+        expect($r1->json('count'))->toBe(2);
 
         $r2 = $this->actingAs($employee, 'sanctum')
             ->postJson('/api/admin/invoices/generate-by-contract');
         $r2->assertStatus(200);
         expect($r2->json('count'))->toBe(0);
-        expect($r2->json('report.skipped_count'))->toBe(1);
-        expect(Invoice::count())->toBe(1);
+        expect($r2->json('report.skipped_count'))->toBe(2);
+        expect(Invoice::count())->toBe(2);
 
         $skipped = $r2->json('report.skipped.0');
         expect($skipped['reason'])->toContain('ya existe');
@@ -152,12 +162,14 @@ describe('POST /admin/invoices/generate-by-contract', function () {
         Carbon::setTestNow();
     });
 
-    it('no sobrescribe una factura existente con monto distinto', function () {
+    it('no sobrescribe una factura existente con monto distinto y omite solo el ciclo correspondiente', function () {
         seedBillingConfig();
         Carbon::setTestNow(Carbon::parse('2026-05-20'));
 
-        [$client, , $cp] = makeClientWithContractDate('2024-01-15', 100);
+        // contract = 2026-04-15 → ciclos: abr 15, may 15
+        [$client, , $cp] = makeClientWithContractDate('2026-04-15', 100);
 
+        // Factura preexistente para el ciclo de mayo (issue_date dentro de [may 15, jun 14])
         $preexisting = Invoice::create([
             'client_id'              => $client->id,
             'client_plan_id'         => $cp->id,
@@ -171,29 +183,32 @@ describe('POST /admin/invoices/generate-by-contract', function () {
             'configuration_snapshot' => [],
         ]);
 
-        $this->actingAs(makeAuthorizedEmployee(), 'sanctum')
-            ->postJson('/api/admin/invoices/generate-by-contract')
-            ->assertStatus(200)
-            ->assertJsonPath('count', 0);
+        $res = $this->actingAs(makeAuthorizedEmployee(), 'sanctum')
+            ->postJson('/api/admin/invoices/generate-by-contract');
+
+        $res->assertStatus(200);
+        // El ciclo de abril se genera (1), el de mayo se omite por el preexistente
+        expect($res->json('count'))->toBe(1);
+        expect($res->json('report.skipped_count'))->toBe(1);
 
         $preexisting->refresh();
         expect((float) $preexisting->amount)->toBe(999.99);
         expect((float) $preexisting->total_amount)->toBe(1149.99);
-        expect(Invoice::count())->toBe(1);
+        expect(Invoice::count())->toBe(2); // 1 preexistente + 1 nueva (abril)
 
         Carbon::setTestNow();
     });
 
-    it('procesa múltiples clientes en una sola ejecución', function () {
+    it('procesa múltiples clientes generando todos sus ciclos retroactivos', function () {
         seedBillingConfig();
         Carbon::setTestNow(Carbon::parse('2026-05-20'));
 
-        // Cliente A — sin facturas previas: se genera
-        [$a] = makeClientWithContractDate('2024-01-10', 50);
-        // Cliente B — sin facturas previas: se genera
-        [$b] = makeClientWithContractDate('2024-01-12', 75);
-        // Cliente C — ya tiene factura del ciclo actual: se omite
-        [$c, , $cpC] = makeClientWithContractDate('2024-01-15', 100);
+        // Cliente A — contract 2026-03-10 → 3 ciclos (mar, abr, may)
+        [$a] = makeClientWithContractDate('2026-03-10', 50);
+        // Cliente B — contract 2026-04-12 → 2 ciclos (abr, may)
+        [$b] = makeClientWithContractDate('2026-04-12', 75);
+        // Cliente C — contract 2026-05-15, con factura preexistente del ciclo de mayo
+        [$c, , $cpC] = makeClientWithContractDate('2026-05-15', 100);
         Invoice::create([
             'client_id'              => $c->id,
             'client_plan_id'         => $cpC->id,
@@ -211,10 +226,11 @@ describe('POST /admin/invoices/generate-by-contract', function () {
             ->postJson('/api/admin/invoices/generate-by-contract');
 
         $res->assertStatus(200);
-        expect($res->json('report.generated_count'))->toBe(2);
+        // A: 3 generadas, B: 2 generadas, C: 0 generadas (1 omitida)
+        expect($res->json('report.generated_count'))->toBe(5);
         expect($res->json('report.skipped_count'))->toBe(1);
         expect($res->json('report.clients_total'))->toBe(3);
-        expect(Invoice::count())->toBe(3);
+        expect(Invoice::count())->toBe(6); // 5 nuevas + 1 preexistente
 
         Carbon::setTestNow();
     });
@@ -268,15 +284,17 @@ describe('POST /admin/invoices/generate-by-contract', function () {
         seedBillingConfig();
         Carbon::setTestNow(Carbon::parse('2026-06-30'));
 
-        makeClientWithContractDate('2024-01-31', 60);
+        // contract = 2026-05-31 → ciclos: may 31, jun 30 (clamped, jun no tiene 31)
+        makeClientWithContractDate('2026-05-31', 60);
 
         $this->actingAs(makeAuthorizedEmployee(), 'sanctum')
             ->postJson('/api/admin/invoices/generate-by-contract')
             ->assertStatus(200);
 
-        $invoice = Invoice::first();
-        // junio tiene 30 días -> aniversario clamped al 30
-        expect($invoice->issue_date->toDateString())->toBe('2026-06-30');
+        expect(Invoice::count())->toBe(2);
+
+        $issueDates = Invoice::orderBy('issue_date')->pluck('issue_date')->map->toDateString()->all();
+        expect($issueDates)->toBe(['2026-05-31', '2026-06-30']);
 
         Carbon::setTestNow();
     });
@@ -319,11 +337,13 @@ describe('rendimiento del endpoint generate-by-contract', function () {
         Carbon::setTestNow(Carbon::parse('2026-05-20'));
 
         $plan = Plan::factory()->create(['monthly_price' => 50]);
-        $count = 60;
+        $clients = 60;
 
-        for ($i = 1; $i <= $count; $i++) {
+        // Cada cliente tiene contract_date entre el día 1 y 20 de abril 2026.
+        // Con today=may 20: cada cliente tiene exactamente 2 ciclos (abr y may).
+        for ($i = 1; $i <= $clients; $i++) {
             $client = Client::factory()->create([
-                'contract_date' => '2024-01-' . str_pad((string) (($i % 28) + 1), 2, '0', STR_PAD_LEFT),
+                'contract_date' => '2026-04-' . str_pad((string) (($i % 20) + 1), 2, '0', STR_PAD_LEFT),
             ]);
             ClientPlan::factory()->create([
                 'client_id'     => $client->id,
@@ -333,22 +353,24 @@ describe('rendimiento del endpoint generate-by-contract', function () {
             ]);
         }
 
+        $expectedInvoices = $clients * 2;
+
         $started = microtime(true);
         $res = $this->actingAs(makeAuthorizedEmployee(), 'sanctum')
             ->postJson('/api/admin/invoices/generate-by-contract');
         $elapsed = microtime(true) - $started;
 
         $res->assertStatus(200);
-        expect($res->json('report.generated_count'))->toBe($count);
-        expect(Invoice::count())->toBe($count);
+        expect($res->json('report.generated_count'))->toBe($expectedInvoices);
+        expect(Invoice::count())->toBe($expectedInvoices);
 
         // Segunda ejecución: ninguna nueva, todas omitidas
         $res2 = $this->actingAs(makeAuthorizedEmployee(), 'sanctum')
             ->postJson('/api/admin/invoices/generate-by-contract');
         $res2->assertStatus(200);
         expect($res2->json('report.generated_count'))->toBe(0);
-        expect($res2->json('report.skipped_count'))->toBe($count);
-        expect(Invoice::count())->toBe($count);
+        expect($res2->json('report.skipped_count'))->toBe($expectedInvoices);
+        expect(Invoice::count())->toBe($expectedInvoices);
 
         // Aserción suelta de rendimiento — no debe demorar irrazonablemente
         expect($elapsed)->toBeLessThan(30.0);

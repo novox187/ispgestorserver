@@ -16,19 +16,24 @@ class ClientPlanFactory extends Factory
         $client = Client::inRandomOrder()->first() ?? Client::factory()->create();
         $plan = Plan::active()->inRandomOrder()->first() ?? Plan::factory()->create();
 
-        // Asegurar que la fecha de inicio sea posterior a la fecha de contrato del cliente
-        $minDate = $client->contract_date ? new \DateTime($client->contract_date) : new \DateTime('-1 year');
-        $startDate = $this->faker->dateTimeBetween($minDate, 'now');
+        // Asegurar que la fecha de inicio sea posterior a la fecha de contrato del cliente.
+        // Carbon::now() respects setTestNow, unlike 'now' string in Faker (which uses real clock).
+        $now     = \Carbon\Carbon::now()->toDateTime();
+        $minDate = $client->contract_date ? new \DateTime($client->contract_date) : (clone $now)->modify('-1 year');
+        if ($minDate > $now) {
+            $minDate = clone $now;
+        }
+        $startDate = $this->faker->dateTimeBetween($minDate, $now);
         
         $billingCycle = $this->faker->randomElement(['monthly', 'quarterly', 'yearly']);
         $status = $this->faker->randomElement(['active', 'active', 'active', 'suspended', 'cancelled']);
         
         $endDate = null;
         if ($status === 'cancelled' || $status === 'suspended') {
-            $endDate = $this->faker->dateTimeBetween($startDate, 'now');
+            $endDate = $this->faker->dateTimeBetween($startDate, $now);
         }
 
-        $nextBillingDate = $this->calculateNextBillingDate($status === 'active' ? new \DateTime() : $startDate, $billingCycle);
+        $nextBillingDate = $this->calculateNextBillingDate($status === 'active' ? $now : $startDate, $billingCycle);
 
         return [
             'client_id' => $client->id,

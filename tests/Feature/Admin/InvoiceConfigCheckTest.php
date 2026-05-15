@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\Employee;
+use App\Models\Role;
 use App\Models\Setting;
 use App\Models\Client;
 use App\Models\Plan;
@@ -35,7 +36,11 @@ function seedFullConfig(): void
 
 function makeEmployee(): Employee
 {
-    return Employee::factory()->create();
+    $role = Role::firstOrCreate(
+        ['slug' => 'super_admin'],
+        ['nombre' => 'Super Admin', 'descripcion' => '']
+    );
+    return Employee::factory()->create(['role_id' => $role->id]);
 }
 
 // ── GET /admin/invoices/config-check ──────────────────────────────────────

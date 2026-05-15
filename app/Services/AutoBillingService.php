@@ -94,19 +94,23 @@ class AutoBillingService
         ]);
     }
 
+     /**
+    * Límite estricto para evitar bucles descontrolados si un cliente tiene una
+    * contract_date en un pasado remoto (p. ej., datos inconsistentes). 
+    * 240 ciclos ≈ 20 años de facturación mensual. 
+    */
+    private const MAX_CYCLES_PER_CLIENT = 240;
+
     /**
-     * Generar facturas por cliente, ancladas a su fecha de contrato.
+     * Generar facturas retroactivas por cliente, ancladas a su fecha de contrato.
      *
      * Para cada cliente activo con contract_date no nula:
-     *   - calcula el inicio del ciclo de facturación corriente (último aniversario
-     *     del día-de-mes de contract_date que es <= hoy)
-     *   - verifica si ya existe una factura para ese client_plan en ese ciclo
-     *     (incluyendo papelera) usando lockForUpdate dentro de una transacción
-     *   - si no existe, la crea; si existe, se omite con motivo registrado
+     *   - calcula TODOS los ciclos desde contract_date hasta hoy
+     *   - para cada ciclo: si ya existe factura en ese rango → omite; si no → crea
      *
-     * Cada factura se crea en su propia transacción atómica. Si ocurre una
-     * excepción al crear una factura puntual, se aborta la iteración para evitar
-     * acumulación de errores y se devuelve un reporte con los resultados parciales.
+     * Cada ciclo se evalúa en su propia transacción con lockForUpdate. Si una
+     * creación falla, se registra el error y se continúa con el siguiente cliente
+     * (los demás ciclos del cliente actual se omiten para evitar inconsistencias).
      */
     public function generateInvoicesByContractDate(): array
     {
@@ -144,53 +148,65 @@ class AutoBillingService
         $generated        = [];
         $skipped          = [];
         $errors           = [];
-        $aborted          = false;
-        $abortReason      = null;
 
         foreach ($clientsWithPlans as $client) {
+            $cycles = $this->computeAllCyclesFromContract($client->contract_date);
+
             $processedClients[] = [
                 'client_id'     => $client->id,
                 'full_name'     => $client->full_name,
                 'contract_date' => optional($client->contract_date)->toDateString(),
                 'plans_count'   => $client->clientPlans->count(),
+                'cycles_total'  => count($cycles),
             ];
 
             foreach ($client->clientPlans as $clientPlan) {
-                try {
-                    $result = DB::transaction(function () use ($client, $clientPlan, $snapshot, $taxRate) {
-                        return $this->createContractBasedInvoice($client, $clientPlan, $snapshot, $taxRate);
-                    });
+                $clientPlanAborted = false;
 
-                    if ($result['status'] === 'created') {
-                        $generated[] = [
-                            'invoice_id'     => $result['invoice']->id,
-                            'invoice_number' => $result['invoice']->invoice_number,
+                foreach ($cycles as [$cycleStart, $cycleEnd]) {
+                    if ($clientPlanAborted) {
+                        break;
+                    }
+
+                    try {
+                        $result = DB::transaction(function () use ($client, $clientPlan, $snapshot, $taxRate, $cycleStart, $cycleEnd) {
+                            return $this->createContractBasedInvoice($client, $clientPlan, $snapshot, $taxRate, $cycleStart, $cycleEnd);
+                        });
+
+                        if ($result['status'] === 'created') {
+                            $generated[] = [
+                                'invoice_id'     => $result['invoice']->id,
+                                'invoice_number' => $result['invoice']->invoice_number,
+                                'client_id'      => $client->id,
+                                'client_plan_id' => $clientPlan->id,
+                                'cycle_start'    => $result['cycle_start'],
+                                'cycle_end'      => $result['cycle_end'],
+                                'total_amount'   => $result['invoice']->total_amount,
+                            ];
+                        } else {
+                            $skipped[] = $result;
+                        }
+                    } catch (\Throwable $e) {
+                        $errors[] = [
                             'client_id'      => $client->id,
                             'client_plan_id' => $clientPlan->id,
-                            'cycle_start'    => $result['cycle_start'],
-                            'cycle_end'      => $result['cycle_end'],
-                            'total_amount'   => $result['invoice']->total_amount,
+                            'cycle_start'    => $cycleStart->toDateString(),
+                            'cycle_end'      => $cycleEnd->toDateString(),
+                            'reason'         => $e->getMessage(),
                         ];
-                    } else {
-                        $skipped[] = $result;
-                    }
-                } catch (\Throwable $e) {
-                    $errors[] = [
-                        'client_id'      => $client->id,
-                        'client_plan_id' => $clientPlan->id,
-                        'reason'         => $e->getMessage(),
-                    ];
-                    $aborted     = true;
-                    $abortReason = "Error en cliente #{$client->id} / plan #{$clientPlan->id}: {$e->getMessage()}";
 
-                    Log::channel('billing')->error('Generación por fecha de contrato — abortada por error', [
-                        'execution_id'   => $executionId,
-                        'client_id'      => $client->id,
-                        'client_plan_id' => $clientPlan->id,
-                        'error'          => $e->getMessage(),
-                        'trace'          => $e->getTraceAsString(),
-                    ]);
-                    break 2;
+                        Log::channel('billing')->error('Generación por fecha de contrato — error en ciclo', [
+                            'execution_id'   => $executionId,
+                            'client_id'      => $client->id,
+                            'client_plan_id' => $clientPlan->id,
+                            'cycle_start'    => $cycleStart->toDateString(),
+                            'cycle_end'      => $cycleEnd->toDateString(),
+                            'error'          => $e->getMessage(),
+                        ]);
+
+                        // Detener este client_plan, pero seguir con otros clientes.
+                        $clientPlanAborted = true;
+                    }
                 }
             }
         }
@@ -199,8 +215,8 @@ class AutoBillingService
             'execution_id'      => $executionId,
             'started_at'        => $startedAt->toIso8601String(),
             'finished_at'       => now()->toIso8601String(),
-            'aborted'           => $aborted,
-            'abort_reason'      => $abortReason,
+            'aborted'           => false,
+            'abort_reason'      => null,
             'clients_total'     => count($processedClients),
             'generated_count'   => count($generated),
             'skipped_count'     => count($skipped),
@@ -217,11 +233,11 @@ class AutoBillingService
     }
 
     /**
-     * Crear una factura anclada a la fecha de contrato del cliente.
+     * Crear una factura para un ciclo específico anclado a la fecha de contrato.
      * Debe invocarse dentro de una transacción con lockForUpdate para garantizar
      * que la verificación de duplicado y la inserción sean atómicas.
      */
-    private function createContractBasedInvoice(Client $client, $clientPlan, array $snapshot, float $taxRate): array
+    private function createContractBasedInvoice(Client $client, $clientPlan, array $snapshot, float $taxRate, Carbon $cycleStart, Carbon $cycleEnd): array
     {
         $contractDate = $client->contract_date;
         if (!$contractDate) {
@@ -243,8 +259,6 @@ class AutoBillingService
                 'client_plan_id' => $clientPlan->id,
             ];
         }
-
-        [$cycleStart, $cycleEnd] = $this->computeContractCycle($contractDate);
 
         // Bloqueo pesimista para evitar duplicados ante ejecuciones concurrentes.
         // Se incluyen las facturas con soft-delete para no reutilizar números/fechas.
@@ -303,34 +317,46 @@ class AutoBillingService
     }
 
     /**
-     * Calcula el rango del ciclo de facturación corriente a partir del día-de-mes
-     * de la fecha de contrato. El inicio del ciclo es el aniversario más reciente
-     * <= hoy; el fin es un día antes del siguiente aniversario.
+     * Calcula TODOS los ciclos desde contract_date hasta hoy (inclusive del ciclo actual).
      *
-     * Considera meses cortos: si contract_date.day=31 y el mes solo tiene 30,
-     * usa el último día del mes.
+     * Cada ciclo es un par [start, end] donde:
+     *   - start es el aniversario del día-de-mes de contract_date para ese mes
+     *   - end es un día antes del siguiente aniversario
      *
-     * @return array{0: Carbon, 1: Carbon}
+     * Maneja meses cortos: si contract_date.day=31 y un mes solo tiene 30 días,
+     * el aniversario se ajusta al último día del mes.
+     *
+     * @return array<int, array{0: Carbon, 1: Carbon}>
      */
-    private function computeContractCycle(Carbon $contractDate): array
+    private function computeAllCyclesFromContract(Carbon $contractDate): array
     {
         $today       = Carbon::now()->startOfDay();
         $contractDay = (int) $contractDate->day;
 
-        $thisMonthAnniversary = $today->copy()->startOfMonth()
-            ->addDays(min($contractDay, $today->copy()->endOfMonth()->day) - 1);
+        $cycles = [];
+        $cursor = $contractDate->copy()->startOfDay();
 
-        $cycleStart = $thisMonthAnniversary->lte($today)
-            ? $thisMonthAnniversary
-            : $today->copy()->subMonthNoOverflow()->startOfMonth()
-                ->addDays(min($contractDay, $today->copy()->subMonthNoOverflow()->endOfMonth()->day) - 1);
+        // Si el contract_date es futuro, no hay ciclos a generar.
+        if ($cursor->gt($today)) {
+            return [];
+        }
 
-        $nextAnchorMonth = $cycleStart->copy()->addMonthNoOverflow()->startOfMonth();
-        $nextAnchor      = $nextAnchorMonth->addDays(min($contractDay, $nextAnchorMonth->copy()->endOfMonth()->day) - 1);
+        $iteration = 0;
+        while ($cursor->lte($today) && $iteration < self::MAX_CYCLES_PER_CLIENT) {
+            $cycleStart = $cursor->copy();
 
-        $cycleEnd = $nextAnchor->copy()->subDay()->endOfDay();
+            $nextAnchorMonth = $cursor->copy()->addMonthNoOverflow()->startOfMonth();
+            $nextAnchor      = $nextAnchorMonth->copy()
+                ->addDays(min($contractDay, $nextAnchorMonth->copy()->endOfMonth()->day) - 1);
 
-        return [$cycleStart->startOfDay(), $cycleEnd];
+            $cycleEnd = $nextAnchor->copy()->subDay()->endOfDay();
+
+            $cycles[] = [$cycleStart, $cycleEnd];
+            $cursor   = $nextAnchor;
+            $iteration++;
+        }
+
+        return $cycles;
     }
 
     /**
