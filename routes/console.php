@@ -15,23 +15,15 @@ use App\Services\MikroTikService;
 
 $testMode = (bool) env('SCHEDULE_TEST_MODE', false);
 
-Schedule::job(new ProcessClientSuspension(), 'suspensions')
-    ->when($testMode)->everyFiveMinutes()
-    ->unless($testMode)->dailyAt('02:00')
-    ->withoutOverlapping()
-    ->onOneServer();
-
-Schedule::job(new GenerateMonthlyInvoices(), 'default')
-    ->when($testMode)->everyFiveMinutes()
-    ->unless($testMode)->monthlyOn(1, '01:00')
-    ->withoutOverlapping()
-    ->onOneServer();
-
-Schedule::job(new SyncMikroTikQueues(), 'default')
-    ->when($testMode)->everyFiveMinutes()
-    ->unless($testMode)->everyThirtyMinutes()
-    ->withoutOverlapping()
-    ->onOneServer();
+if ($testMode) {
+    Schedule::job(new ProcessClientSuspension(), 'suspensions')->everyFiveMinutes()->withoutOverlapping()->onOneServer();
+    Schedule::job(new GenerateMonthlyInvoices(), 'default')->everyFiveMinutes()->withoutOverlapping()->onOneServer();
+    Schedule::job(new SyncMikroTikQueues(), 'default')->everyFiveMinutes()->withoutOverlapping()->onOneServer();
+} else {
+    Schedule::job(new ProcessClientSuspension(), 'suspensions')->dailyAt('02:00')->withoutOverlapping()->onOneServer();
+    Schedule::job(new GenerateMonthlyInvoices(), 'default')->monthlyOn(1, '01:00')->withoutOverlapping()->onOneServer();
+    Schedule::job(new SyncMikroTikQueues(), 'default')->everyThirtyMinutes()->withoutOverlapping()->onOneServer();
+}
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
