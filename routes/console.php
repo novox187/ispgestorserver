@@ -11,11 +11,20 @@ use App\Services\MikroTikService;
 // ─── Scheduler dinámico ──────────────────────────────────────────────────────
 // Todas las automatizaciones se leen desde la tabla `automation_settings`.
 // SCHEDULE_TEST_MODE=true fuerza todas a correr cada 5 min (override global).
-// La verificación de Schema evita explotar antes de correr migrations.
+//
+// El try/catch es OBLIGATORIO: durante `composer dump-autoload` en el build de
+// Docker se ejecuta `artisan package:discover` que carga este archivo, pero la
+// imagen de Composer no tiene pdo_mysql y no hay base de datos disponible.
+// Cualquier intento de tocar Schema/DB acá explota el build.
 
-if (Schema::hasTable('automation_settings')) {
-    $testMode = (bool) env('SCHEDULE_TEST_MODE', false);
-    app(AutomationSettingsService::class)->applySchedule(app(Schedule::class), $testMode);
+try {
+    if (Schema::hasTable('automation_settings')) {
+        $testMode = (bool) env('SCHEDULE_TEST_MODE', false);
+        app(AutomationSettingsService::class)->applySchedule(app(Schedule::class), $testMode);
+    }
+} catch (\Throwable $e) {
+    // Silencioso: build time o DB offline. En runtime real el scheduler
+    // se vuelve a invocar cada minuto y reaplica.
 }
 
 Artisan::command('inspire', function () {
