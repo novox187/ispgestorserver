@@ -81,6 +81,14 @@ php artisan db:seed --class=PermissionSeeder
 
 Esto creará `reportes.ver` y `reportes.exportar` en la tabla `permissions`.
 
+
+```bash
+php artisan db:seed --class=AutomationSettingsSeeder
+```
+
+Esto creará las configuraciones de automatizacion en la tabla `automation_settings`.
+
+
 ### 4. Proteger las rutas del backend
 
 Archivo: `routes/api.php`
