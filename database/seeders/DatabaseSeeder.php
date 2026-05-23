@@ -18,30 +18,24 @@ class DatabaseSeeder extends Seeder
             // 2. Roles y administradores
             RolSeeder::class,
             RolePermissionSeeder::class,
-            AdministradorSeeder::class,
-            
-            // 2. Planes y características
-            PlanSeeder::class,
-            PlanFeatureSeeder::class,
-            
-            // 3. Clientes
-            ClientSeeder::class,
-            
-            // 4. Relación clientes-planes
-            ClientPlanSeeder::class,
-            
-            // 5. Sistema de billeteras
-            WalletSeeder::class,
-            TransactionSeeder::class,
-            
-            // 6. Tickets de soporte
-            SupportSeeder::class,
+            //AdministradorSeeder::class,
 
-            // 7. Configuraciones del sistema
+            // 3. Planes y características
+            // PlanSeeder::class,
+            // PlanFeatureSeeder::class,
+
+            // 4. Configuraciones del sistema
             SystemSettingsSeeder::class,
 
-            // 8. Automatizaciones (workers/schedulers)
+            // 5. Automatizaciones (workers/schedulers)
             AutomationSettingsSeeder::class,
+
+            // --- Seeders de prueba (datos ficticios) ---
+            // ClientSeeder::class,
+            // ClientPlanSeeder::class,
+            // WalletSeeder::class,
+            // TransactionSeeder::class,
+            // SupportSeeder::class,
         ]);
 
         $this->command->info('¡Base de datos poblada completamente!');
