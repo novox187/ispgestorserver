@@ -85,6 +85,24 @@ class Client extends Authenticatable
     }
 
     /**
+     * Inclusiones del cliente en la lista blanca (histórico + activas).
+     */
+    public function whitelistEntries(): HasMany
+    {
+        return $this->hasMany(ClientWhitelist::class);
+    }
+
+    /**
+     * Indica si el cliente tiene una inclusión vigente en la lista blanca.
+     */
+    public function isWhitelisted(): bool
+    {
+        return $this->whitelistEntries()
+            ->active()
+            ->exists();
+    }
+
+    /**
      * Filtra los clientes activos.
      */
     public function scopeActive($query)

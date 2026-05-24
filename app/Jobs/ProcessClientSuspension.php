@@ -71,6 +71,17 @@ class ProcessClientSuspension implements ShouldQueue
                     'suspended', 'SUSPENDED', 'SUSPENDIDO',
                     'cancelled', 'CANCELLED',
                 ]);
+
+                // Excluir clientes con inclusión vigente en la lista blanca:
+                // la validación final vive en ClientSuspensionService (defensa en
+                // profundidad), pero filtramos aquí para evitar trabajo inútil.
+                $q->whereDoesntHave('whitelistEntries', function ($w) {
+                    $w->where('active', true)
+                      ->where(function ($expiry) {
+                          $expiry->whereNull('expires_at')
+                                 ->orWhere('expires_at', '>', now());
+                      });
+                });
             })
             ->get();
 

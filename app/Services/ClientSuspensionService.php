@@ -12,7 +12,8 @@ use Illuminate\Support\Facades\Log;
 class ClientSuspensionService
 {
     public function __construct(
-        private readonly MikroTikService $mikrotik
+        private readonly MikroTikService $mikrotik,
+        private readonly ClientWhitelistService $whitelist,
     ) {}
 
     /**
@@ -22,13 +23,50 @@ class ClientSuspensionService
      * en la base de datos. Si MikroTik no está disponible, la suspensión en BD
      * se aplica de todas formas y se registra el fallo para revisión manual.
      *
+     * Antes de cualquier acción se consulta la lista blanca: si el cliente
+     * tiene una inclusión vigente la suspensión queda bloqueada y se devuelve
+     * el resultado con el flag `whitelisted` para trazabilidad.
+     *
      * @param  Client      $client     Cliente a suspender
      * @param  string      $reason     Razón descriptiva del corte
      * @param  int|null    $invoiceId  ID de la factura que originó el corte (si aplica)
-     * @return array{success: bool, already_suspended?: bool, mikrotik?: array}
+     * @return array{success: bool, already_suspended?: bool, whitelisted?: bool, mikrotik?: array}
      */
     public function suspendClient(Client $client, string $reason, ?int $invoiceId = null): array
     {
+        if ($this->whitelist->isProtected($client->id)) {
+            $entry = $this->whitelist->activeEntryFor($client->id);
+
+            Audit::create([
+                'table_name' => 'clients',
+                'operation'  => 'SUSPEND_BLOCKED_WHITELIST',
+                'record_id'  => (string) $client->id,
+                'old_values' => ['service_status' => $client->service_status],
+                'new_values' => [
+                    'service_status' => $client->service_status,
+                    'reason'         => $reason,
+                    'invoice_id'     => $invoiceId,
+                    'whitelist_id'   => $entry?->id,
+                    'whitelist_reason' => $entry?->reason,
+                    'whitelist_expires_at' => optional($entry?->expires_at)->toIso8601String(),
+                    'executor'       => 'system_auto',
+                    'timestamp'      => now()->toIso8601String(),
+                ],
+                'user_id'    => null,
+                'ip_address' => '127.0.0.1',
+            ]);
+
+            Log::info("ClientSuspensionService: Suspensión bloqueada por lista blanca para cliente {$client->id}.", [
+                'whitelist_id' => $entry?->id,
+                'reason'       => $reason,
+            ]);
+
+            return [
+                'success'     => true,
+                'whitelisted' => true,
+            ];
+        }
+
         if (in_array(strtoupper($client->service_status), ['SUSPENDED', 'SUSPENDIDO'])) {
             return ['success' => true, 'already_suspended' => true];
         }

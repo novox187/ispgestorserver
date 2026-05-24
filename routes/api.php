@@ -28,6 +28,7 @@ use App\Http\Controllers\FirewallController;
 use App\Http\Controllers\SettingController;
 use App\Http\Controllers\Admin\SettingController as AdminSettingController;
 use App\Http\Controllers\Admin\AutomationController as AdminAutomationController;
+use App\Http\Controllers\Admin\ClientWhitelistController as AdminClientWhitelistController;
 
 // ── Broadcasting Auth (Reverb / Pusher) ──────────────────────────────────────
 // Acepta tokens de cliente Y de empleado a través de auth:sanctum
@@ -128,6 +129,17 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
     Route::put('/automations/{key}', [AdminAutomationController::class, 'update'])->middleware('permission:configuracion.gestionar');
     Route::get('/automations/{key}/audits', [AdminAutomationController::class, 'audits'])->middleware('permission:configuracion.ver');
     Route::post('/automations/{key}/run-now', [AdminAutomationController::class, 'runNow'])->middleware('permission:configuracion.gestionar');
+
+    // Lista blanca de clientes — solo super_admin
+    Route::prefix('whitelist')->middleware('super_admin')->group(function () {
+        Route::get('/', [AdminClientWhitelistController::class, 'index']);
+        Route::get('/history', [AdminClientWhitelistController::class, 'history']);
+        Route::get('/export', [AdminClientWhitelistController::class, 'exportCsv']);
+        Route::post('/', [AdminClientWhitelistController::class, 'store']);
+        Route::get('/{id}', [AdminClientWhitelistController::class, 'show'])->whereNumber('id');
+        Route::put('/{id}', [AdminClientWhitelistController::class, 'update'])->whereNumber('id');
+        Route::delete('/{id}', [AdminClientWhitelistController::class, 'destroy'])->whereNumber('id');
+    });
 
     // Configuraciones del sistema (solo admin)
     Route::get('/settings', [AdminSettingController::class, 'index'])->middleware('permission:configuracion.ver');
