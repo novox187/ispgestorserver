@@ -9,11 +9,16 @@ class SystemSettingsSeeder extends Seeder
 {
     public function run(): void
     {
-        // Eliminar claves Colombia que ya no aplican en Ecuador
+        // Eliminar claves obsoletas:
+        // - issuer_nit / invoice_resolution_* → Colombia, no aplica en Ecuador.
+        // - grace_period_days / auto_payment_retry_days → migrados a automation_settings
+        //   (client_suspension.grace_days y auto_billing.retry_window_days).
         Setting::whereIn('key', [
             'issuer_nit',
             'invoice_resolution_number',
             'invoice_resolution_date',
+            'grace_period_days',
+            'auto_payment_retry_days',
         ])->delete();
 
         $settings = [
@@ -40,8 +45,6 @@ class SystemSettingsSeeder extends Seeder
             ['module' => 'facturacion', 'group' => 'legal', 'key' => 'sri_emission_point',     'value' => '001', 'data_type' => 'string', 'description' => 'Código del punto de emisión SRI (3 dígitos)', 'is_public' => true],
 
             // ── module: facturacion / group: billing (internos) ──────────────
-            ['module' => 'facturacion', 'group' => 'billing', 'key' => 'grace_period_days',        'value' => '3',  'data_type' => 'integer', 'description' => 'Días de gracia antes de suspensión',    'is_public' => false],
-            ['module' => 'facturacion', 'group' => 'billing', 'key' => 'auto_payment_retry_days',  'value' => '5',  'data_type' => 'integer', 'description' => 'Días de reintento de pago automático',   'is_public' => false],
             ['module' => 'facturacion', 'group' => 'billing', 'key' => 'invoice_due_days',         'value' => '15', 'data_type' => 'integer', 'description' => 'Días de vencimiento desde la emisión',   'is_public' => false],
         ];
 
