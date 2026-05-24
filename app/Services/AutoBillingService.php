@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Audit;
 use App\Models\Client;
 use App\Models\Invoice;
 use App\Models\Wallet;
@@ -32,6 +33,7 @@ class AutoBillingService
         }
 
         $taxRate = $settingService->taxRateFromSnapshot($snapshot);
+        $dueDays = $settingService->invoiceDueDaysFromSnapshot($snapshot);
 
         $clientsWithPlans = Client::whereHas('clientPlans', function ($query) {
             $query->where('status', 'active');
@@ -43,7 +45,7 @@ class AutoBillingService
 
         foreach ($clientsWithPlans as $client) {
             foreach ($client->clientPlans as $clientPlan) {
-                $invoice = $this->createMonthlyInvoice($client, $clientPlan, $snapshot, $taxRate);
+                $invoice = $this->createMonthlyInvoice($client, $clientPlan, $snapshot, $taxRate, $dueDays);
                 if ($invoice) {
                     $generatedInvoices[] = $invoice;
                 }
@@ -56,7 +58,7 @@ class AutoBillingService
     /**
      * Crear factura mensual para un cliente
      */
-    private function createMonthlyInvoice(Client $client, $clientPlan, array $snapshot, float $taxRate): ?Invoice
+    private function createMonthlyInvoice(Client $client, $clientPlan, array $snapshot, float $taxRate, int $dueDays): ?Invoice
     {
         // Verificar si ya existe una factura para este mes
         $existingInvoice = Invoice::where('client_id', $client->id)
@@ -73,12 +75,15 @@ class AutoBillingService
         $taxAmount   = round($amount * $taxRate, 2);
         $totalAmount = round($amount + $taxAmount, 2);
 
-        return Invoice::create([
+        $issueDate = now();
+        $dueDate   = $issueDate->copy()->addDays($dueDays);
+
+        $invoice = Invoice::create([
             'client_id'              => $client->id,
             'client_plan_id'         => $clientPlan->id,
             'invoice_number'         => Invoice::generateInvoiceNumber(),
-            'issue_date'             => now(),
-            'due_date'               => now()->addDays(15),
+            'issue_date'             => $issueDate,
+            'due_date'               => $dueDate,
             'amount'                 => $amount,
             'tax_amount'             => $taxAmount,
             'total_amount'           => $totalAmount,
@@ -91,6 +96,47 @@ class AutoBillingService
                 'download_speed'  => $clientPlan->plan->download_speed,
                 'upload_speed'    => $clientPlan->plan->upload_speed,
             ],
+        ]);
+
+        $this->logDueDateCalculation($invoice, $issueDate, $dueDays, $dueDate, $snapshot, 'monthly');
+
+        return $invoice;
+    }
+
+    /**
+     * Registra en auditoría el desglose del cálculo de la fecha de vencimiento.
+     * Pista de trazabilidad pedida por negocio: emisión → plazo configurado → vencimiento calculado.
+     */
+    private function logDueDateCalculation(
+        Invoice $invoice,
+        \Carbon\Carbon|\DateTimeInterface $issueDate,
+        int $dueDays,
+        \Carbon\Carbon|\DateTimeInterface $dueDate,
+        array $snapshot,
+        string $cycle
+    ): void {
+        $issue = \Carbon\Carbon::instance($issueDate);
+        $due   = \Carbon\Carbon::instance($dueDate);
+
+        // Si el setting estaba ausente del snapshot, lo marcamos como "fallback".
+        $source = array_key_exists('invoice_due_days', $snapshot) ? 'system_settings' : 'fallback_15';
+
+        Audit::create([
+            'table_name' => 'invoices',
+            'operation'  => 'INVOICE_DUE_CALC_OP',
+            'record_id'  => (string) $invoice->id,
+            'old_values' => null,
+            'new_values' => [
+                'invoice_number'           => $invoice->invoice_number,
+                'issue_date'               => $issue->toDateString(),
+                'invoice_due_days'         => $dueDays,
+                'invoice_due_days_source'  => $source,
+                'due_date'                 => $due->toDateString(),
+                'billing_cycle'            => $cycle,
+                'computed_at'              => now()->toIso8601String(),
+            ],
+            'user_id'    => null,
+            'ip_address' => '127.0.0.1',
         ]);
     }
 
@@ -126,6 +172,7 @@ class AutoBillingService
         }
 
         $taxRate     = $settingService->taxRateFromSnapshot($snapshot);
+        $dueDays     = $settingService->invoiceDueDaysFromSnapshot($snapshot);
         $executionId = (string) Str::uuid();
         $startedAt   = now();
         $employee    = auth()->user();
@@ -169,8 +216,8 @@ class AutoBillingService
                     }
 
                     try {
-                        $result = DB::transaction(function () use ($client, $clientPlan, $snapshot, $taxRate, $cycleStart, $cycleEnd) {
-                            return $this->createContractBasedInvoice($client, $clientPlan, $snapshot, $taxRate, $cycleStart, $cycleEnd);
+                        $result = DB::transaction(function () use ($client, $clientPlan, $snapshot, $taxRate, $dueDays, $cycleStart, $cycleEnd) {
+                            return $this->createContractBasedInvoice($client, $clientPlan, $snapshot, $taxRate, $dueDays, $cycleStart, $cycleEnd);
                         });
 
                         if ($result['status'] === 'created') {
@@ -237,7 +284,7 @@ class AutoBillingService
      * Debe invocarse dentro de una transacción con lockForUpdate para garantizar
      * que la verificación de duplicado y la inserción sean atómicas.
      */
-    private function createContractBasedInvoice(Client $client, $clientPlan, array $snapshot, float $taxRate, Carbon $cycleStart, Carbon $cycleEnd): array
+    private function createContractBasedInvoice(Client $client, $clientPlan, array $snapshot, float $taxRate, int $dueDays, Carbon $cycleStart, Carbon $cycleEnd): array
     {
         $contractDate = $client->contract_date;
         if (!$contractDate) {
@@ -285,12 +332,14 @@ class AutoBillingService
         $taxAmount   = round($amount * $taxRate, 2);
         $totalAmount = round($amount + $taxAmount, 2);
 
+        $dueDate = $cycleStart->copy()->addDays($dueDays);
+
         $invoice = Invoice::create([
             'client_id'              => $client->id,
             'client_plan_id'         => $clientPlan->id,
             'invoice_number'         => Invoice::generateInvoiceNumber(),
             'issue_date'             => $cycleStart,
-            'due_date'               => $cycleStart->copy()->addDays(15),
+            'due_date'               => $dueDate,
             'amount'                 => $amount,
             'tax_amount'             => $taxAmount,
             'total_amount'           => $totalAmount,
@@ -307,6 +356,8 @@ class AutoBillingService
                 'upload_speed'    => optional($clientPlan->plan)->upload_speed,
             ],
         ]);
+
+        $this->logDueDateCalculation($invoice, $cycleStart, $dueDays, $dueDate, $snapshot, 'contract_based');
 
         return [
             'status'      => 'created',
@@ -360,47 +411,139 @@ class AutoBillingService
     }
 
     /**
-     * Procesar pagos automáticos
+     * Parámetros por defecto del proceso de cobros automáticos.
+     * Se utilizan cuando no se proveen vía AutomationSetting (p. ej. ejecución manual).
      */
-    public function processAutoPayments()
+    public const AUTO_BILLING_DEFAULTS = [
+        'days_before_due'    => 5,    // ventana de anticipación (días antes del vencimiento)
+        'retry_window_days'  => 7,    // ventana de reintento para facturas FAILED recientes
+        'max_retries'        => 3,    // tope de reintentos por factura
+        'min_amount'         => 0.50, // monto mínimo cobrable
+        'max_amount'         => 10000.00, // tope de seguridad por cobro
+        'notify_on_success'  => false,
+        'notify_on_failure'  => true,
+        'notify_on_retry'    => false,
+    ];
+
+    /**
+     * Procesar pagos automáticos.
+     *
+     * @param  array  $config  Parámetros operativos. Cualquier ausente se completa con AUTO_BILLING_DEFAULTS.
+     *                         Claves soportadas:
+     *                           - days_before_due:    int
+     *                           - retry_window_days:  int
+     *                           - max_retries:        int
+     *                           - min_amount:         float
+     *                           - max_amount:         float
+     *                           - notify_on_success:  bool
+     *                           - notify_on_failure:  bool
+     *                           - notify_on_retry:    bool
+     */
+    public function processAutoPayments(array $config = []): array
     {
-        // Buscar facturas pendientes O fallidas que estén en fecha de pago
+        $config = array_merge(self::AUTO_BILLING_DEFAULTS, $config);
+
+        // Facturas elegibles para cobro/reintento:
+        //   - PENDING o FAILED próximas a vencer (dentro de days_before_due)
+        //   - FAILED recientes (creadas dentro de retry_window_days) para reintento
         $invoices = Invoice::with(['client.wallet'])
-            ->where(function ($query) {
-                $query->whereIn('status', [Invoice::STATUS_PENDING, Invoice::STATUS_FAILED])->where('due_date', '<=', now()->addDays(5));
+            ->where(function ($query) use ($config) {
+                $query->whereIn('status', [Invoice::STATUS_PENDING, Invoice::STATUS_FAILED])
+                      ->where('due_date', '<=', now()->addDays((int) $config['days_before_due']));
             })
-            ->orWhere(function ($query) {
-                // También incluir facturas fallidas recientes (últimos 7 días) para reintento
-                $query->where('status', Invoice::STATUS_FAILED)->where('created_at', '>=', now()->subDays(7));
+            ->orWhere(function ($query) use ($config) {
+                $query->where('status', Invoice::STATUS_FAILED)
+                      ->where('created_at', '>=', now()->subDays((int) $config['retry_window_days']));
             })
             ->get();
 
-        // ELIMINADO: $this->info("🔍 Encontradas {$invoices->count()} facturas para procesar...");
-
-        $results = [];
+        $results            = [];
         $reintentosExitosos = 0;
+        $skippedRange       = 0;
+        $skippedMaxRetries  = 0;
 
         foreach ($invoices as $invoice) {
+            $amount = (float) $invoice->total_amount;
+
+            // Filtro por montos mínimo/máximo configurados
+            if ($amount < (float) $config['min_amount'] || $amount > (float) $config['max_amount']) {
+                $skippedRange++;
+                $results[] = [
+                    'invoice_id'      => $invoice->id,
+                    'invoice_number'  => $invoice->invoice_number,
+                    'client_id'       => $invoice->client_id,
+                    'previous_status' => $invoice->status,
+                    'result'          => [
+                        'success' => false,
+                        'skipped' => true,
+                        'error'   => "Monto {$amount} fuera del rango [{$config['min_amount']}, {$config['max_amount']}]",
+                    ],
+                ];
+                continue;
+            }
+
+            // Filtro por máximo de reintentos en facturas FAILED
+            $retryCount = (int) ($invoice->metadata['retry_count'] ?? 0);
+            if ($invoice->status === Invoice::STATUS_FAILED && $retryCount >= (int) $config['max_retries']) {
+                $skippedMaxRetries++;
+                $results[] = [
+                    'invoice_id'      => $invoice->id,
+                    'invoice_number'  => $invoice->invoice_number,
+                    'client_id'       => $invoice->client_id,
+                    'previous_status' => $invoice->status,
+                    'result'          => [
+                        'success' => false,
+                        'skipped' => true,
+                        'error'   => "Reintentos agotados ({$retryCount}/{$config['max_retries']})",
+                    ],
+                ];
+                continue;
+            }
+
             $estadoAnterior = $invoice->status;
-            $result = $this->processInvoicePayment($invoice);
+            $result         = $this->processInvoicePayment($invoice);
 
             $results[] = [
-                'invoice_id' => $invoice->id,
-                'invoice_number' => $invoice->invoice_number,
-                'client_id' => $invoice->client_id,
+                'invoice_id'      => $invoice->id,
+                'invoice_number'  => $invoice->invoice_number,
+                'client_id'       => $invoice->client_id,
                 'previous_status' => $estadoAnterior,
-                'result' => $result,
+                'result'          => $result,
             ];
 
-            // Contar reintentos exitosos
-            if ($estadoAnterior === Invoice::STATUS_FAILED && $result['success']) {
-                $reintentosExitosos++;
+            // Aplicar reglas de notificación según el resultado
+            if ($result['success']) {
+                if ($estadoAnterior === Invoice::STATUS_FAILED) {
+                    $reintentosExitosos++;
+                    if ($config['notify_on_retry']) {
+                        Log::channel('billing')->info("AutoBilling: REINTENTO exitoso para {$invoice->invoice_number}.");
+                    }
+                } elseif ($config['notify_on_success']) {
+                    Log::channel('billing')->info("AutoBilling: pago exitoso para {$invoice->invoice_number}.");
+                }
+            } else {
+                // Incrementar contador de reintentos cuando el fallo NO es por skip
+                if ($invoice->status === Invoice::STATUS_FAILED) {
+                    $invoice->update([
+                        'metadata' => array_merge($invoice->metadata ?? [], [
+                            'retry_count' => $retryCount + 1,
+                            'last_retry_at' => now()->toIso8601String(),
+                        ]),
+                    ]);
+                }
+                if ($config['notify_on_failure']) {
+                    Log::channel('billing')->warning("AutoBilling: fallo de cobro en {$invoice->invoice_number}: " . ($result['error'] ?? 'desconocido'));
+                }
             }
         }
 
-        // ELIMINADO: if ($reintentosExitosos > 0) { $this->info(...); }
-
-        return $results;
+        return [
+            'processed'           => $results,
+            'retried_successfully'=> $reintentosExitosos,
+            'skipped_amount'      => $skippedRange,
+            'skipped_max_retries' => $skippedMaxRetries,
+            'config_used'         => $config,
+        ];
     }
 
     /**
@@ -508,7 +651,8 @@ class AutoBillingService
         $results = [];
 
         $results['invoices_generated'] = $this->generateMonthlyInvoices();
-        $results['payments_processed'] = $this->processAutoPayments();
+        $paymentRun = $this->processAutoPayments();
+        $results['payments_processed'] = $paymentRun['processed'] ?? [];
         $results['summary'] = $this->getBillingSummary();
 
         return $results;

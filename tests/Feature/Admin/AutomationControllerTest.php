@@ -49,8 +49,8 @@ describe('GET /admin/automations', function () {
             ->getJson('/api/admin/automations');
 
         $res->assertStatus(200);
-        expect($res->json())->toHaveCount(1);
-        expect($res->json('0.key'))->toBe('client_suspension');
+        $keys = collect($res->json())->pluck('key')->all();
+        expect($keys)->toContain('client_suspension');
     });
 
     it('requiere autenticación', function () {

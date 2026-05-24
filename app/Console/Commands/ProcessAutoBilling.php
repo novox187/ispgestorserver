@@ -50,8 +50,8 @@ class ProcessAutoBilling extends Command
                 // Solo procesar pagos
                 $this->info('💳 Procesando pagos automáticos...');
                 $results = $billingService->processAutoPayments();
-                
-                $this->processPaymentResults($results);
+
+                $this->processPaymentResults($results['processed'] ?? []);
 
             } else {
                 // Proceso completo
@@ -61,8 +61,8 @@ class ProcessAutoBilling extends Command
 
                 $this->info('💳 Procesando pagos automáticos...');
                 $results = $billingService->processAutoPayments();
-                
-                $this->processPaymentResults($results);
+
+                $this->processPaymentResults($results['processed'] ?? []);
             }
 
             // Mostrar resumen final

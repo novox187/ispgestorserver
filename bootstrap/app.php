@@ -53,19 +53,14 @@ return Application::configure(basePath: dirname(__DIR__))
         $sched = config('billing.schedule');
 
         // Las automatizaciones con AutomationSetting (suspensión, facturación
-        // mensual, sync MikroTik) NO se registran aquí: las gestiona el scheduler
-        // dinámico de routes/console.php respetando el flag `enabled`.
-        // Registrarlas también aquí duplicaba la ejecución y hacía que la
-        // suspensión automática siguiera corriendo aunque estuviese desactivada.
-
-        // Cobro automático diario — intenta pagar facturas próximas a vencer
-        $schedule->command('billing:process --process-payments')
-                 ->dailyAt($sched['process_payments_time'])
-                 ->timezone($tz)
-                 ->withoutOverlapping()
-                 ->appendOutputTo(storage_path('logs/billing.log'));
+        // mensual, cobros automáticos, sync MikroTik) NO se registran aquí: las
+        // gestiona el scheduler dinámico de routes/console.php respetando el
+        // flag `enabled`. Registrarlas también aquí duplicaba la ejecución y
+        // hacía que la automatización siguiera corriendo aunque estuviese
+        // desactivada desde la UI.
 
         // Reactivación automática de clientes suspendidos con saldo suficiente
+        // (sin contraparte en automation_settings).
         $schedule->command('billing:reactivate')
                  ->dailyAt($sched['auto_reactivate_time'])
                  ->timezone($tz)

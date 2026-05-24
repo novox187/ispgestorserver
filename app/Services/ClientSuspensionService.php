@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Audit;
 use App\Models\Client;
 use App\Models\ClientPlan;
+use App\Models\Invoice;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -57,8 +58,30 @@ class ClientSuspensionService
             Log::warning("ClientSuspensionService: Cliente {$client->id} sin IP. Suspendido solo en BD.");
         }
 
+        // Datos de la factura que disparó el corte (si aplica) para trazabilidad.
+        $invoiceTrace = null;
+        if ($invoiceId) {
+            $invoice = Invoice::find($invoiceId);
+            if ($invoice) {
+                $issue = $invoice->issue_date instanceof \DateTimeInterface
+                    ? \Carbon\Carbon::instance($invoice->issue_date)
+                    : \Carbon\Carbon::parse($invoice->issue_date);
+                $due = $invoice->due_date instanceof \DateTimeInterface
+                    ? \Carbon\Carbon::instance($invoice->due_date)
+                    : \Carbon\Carbon::parse($invoice->due_date);
+
+                $invoiceTrace = [
+                    'invoice_id'        => $invoice->id,
+                    'invoice_number'    => $invoice->invoice_number,
+                    'issue_date'        => $issue->toDateString(),
+                    'due_date'          => $due->toDateString(),
+                    'configured_due_days' => $issue->diffInDays($due),
+                ];
+            }
+        }
+
         // La suspensión en BD se aplica siempre, aunque MikroTik haya fallado
-        DB::transaction(function () use ($client, $reason, $invoiceId, $mkResult) {
+        DB::transaction(function () use ($client, $reason, $invoiceId, $mkResult, $invoiceTrace) {
             $oldStatus = $client->service_status;
 
             $client->service_status = 'suspended';
@@ -74,14 +97,16 @@ class ClientSuspensionService
                 'record_id'  => (string) $client->id,
                 'old_values' => ['service_status' => $oldStatus],
                 'new_values' => [
-                    'service_status'  => 'suspended',
-                    'ip'              => $client->ip,
-                    'reason'          => $reason,
-                    'invoice_id'      => $invoiceId,
-                    'mikrotik_list'   => 'morosos',
-                    'mikrotik_result' => $mkResult,
-                    'executor'        => 'system_auto',
-                    'timestamp'       => now()->toIso8601String(),
+                    'service_status'   => 'suspended',
+                    'ip'               => $client->ip,
+                    'reason'           => $reason,
+                    'invoice_id'       => $invoiceId,
+                    'invoice_trace'    => $invoiceTrace,
+                    'suspension_activated_at' => now()->toIso8601String(),
+                    'mikrotik_list'    => 'morosos',
+                    'mikrotik_result'  => $mkResult,
+                    'executor'         => 'system_auto',
+                    'timestamp'        => now()->toIso8601String(),
                 ],
                 'user_id'    => null,
                 'ip_address' => '127.0.0.1',

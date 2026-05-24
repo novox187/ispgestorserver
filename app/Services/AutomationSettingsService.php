@@ -119,6 +119,19 @@ class AutomationSettingsService
                         $errors[$field] = "'{$field}' debe ser <= {$rules['max']}";
                     }
                     break;
+                case 'decimal':
+                    if (!is_numeric($value)) {
+                        $errors[$field] = "'{$field}' debe ser un número decimal";
+                        break;
+                    }
+                    $floatValue = (float) $value;
+                    if (isset($rules['min']) && $floatValue < (float) $rules['min']) {
+                        $errors[$field] = "'{$field}' debe ser >= {$rules['min']}";
+                    }
+                    if (isset($rules['max']) && $floatValue > (float) $rules['max']) {
+                        $errors[$field] = "'{$field}' debe ser <= {$rules['max']}";
+                    }
+                    break;
                 case 'boolean':
                     if (!is_bool($value) && !in_array($value, [0, 1, '0', '1', 'true', 'false'], true)) {
                         $errors[$field] = "'{$field}' debe ser true o false";

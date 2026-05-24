@@ -55,6 +55,18 @@ class SettingService
         return (float) ($snapshot['tax_rate']['value'] ?? 0);
     }
 
+    /**
+     * Plazo de vencimiento (días) configurado en system_settings → facturacion.
+     * Si el setting está ausente, se devuelve el fallback (15 días, comportamiento histórico).
+     */
+    public function invoiceDueDaysFromSnapshot(array $snapshot, int $fallback = 15): int
+    {
+        $raw = $snapshot['invoice_due_days']['value'] ?? $fallback;
+        $days = (int) $raw;
+        // El plazo debe ser >= 0; si llega un valor inválido, se usa el fallback.
+        return $days >= 0 ? $days : $fallback;
+    }
+
     public function publicEntries(array $snapshot): array
     {
         return array_filter($snapshot, fn ($entry) => ($entry['_public'] ?? false) === true);
