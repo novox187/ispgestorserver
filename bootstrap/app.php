@@ -1,8 +1,5 @@
 <?php
 
-use App\Jobs\GenerateMonthlyInvoices;
-use App\Jobs\ProcessClientSuspension;
-use App\Jobs\SyncMikroTikQueues;
 use App\Http\Middleware\EnsureEmployeeSuperAdmin;
 use App\Http\Middleware\CheckPermission;
 use Illuminate\Console\Scheduling\Schedule;
@@ -55,12 +52,11 @@ return Application::configure(basePath: dirname(__DIR__))
         $tz    = config('billing.timezone');
         $sched = config('billing.schedule');
 
-        // Día configurable del mes — generación de facturas mensuales
-        $schedule->job(new GenerateMonthlyInvoices())
-                 ->monthlyOn($sched['generate_invoices_day'], $sched['generate_invoices_time'])
-                 ->timezone($tz)
-                 ->withoutOverlapping()
-                 ->appendOutputTo(storage_path('logs/invoices.log'));
+        // Las automatizaciones con AutomationSetting (suspensión, facturación
+        // mensual, sync MikroTik) NO se registran aquí: las gestiona el scheduler
+        // dinámico de routes/console.php respetando el flag `enabled`.
+        // Registrarlas también aquí duplicaba la ejecución y hacía que la
+        // suspensión automática siguiera corriendo aunque estuviese desactivada.
 
         // Cobro automático diario — intenta pagar facturas próximas a vencer
         $schedule->command('billing:process --process-payments')
@@ -69,22 +65,9 @@ return Application::configure(basePath: dirname(__DIR__))
                  ->withoutOverlapping()
                  ->appendOutputTo(storage_path('logs/billing.log'));
 
-        // Corte automático de morosos (con días de gracia configurables)
-        $schedule->job(new ProcessClientSuspension(), config('billing.queue.suspensions'))
-                 ->dailyAt($sched['auto_suspend_time'])
-                 ->timezone($tz)
-                 ->withoutOverlapping()
-                 ->appendOutputTo(storage_path('logs/suspensions.log'));
-
         // Reactivación automática de clientes suspendidos con saldo suficiente
         $schedule->command('billing:reactivate')
                  ->dailyAt($sched['auto_reactivate_time'])
-                 ->timezone($tz)
-                 ->withoutOverlapping();
-
-        // Sincronización de colas MikroTik (dos veces al día)
-        $schedule->job(new SyncMikroTikQueues(), 'default')
-                 ->twiceDaily(...$sched['mikrotik_sync_hours'])
                  ->timezone($tz)
                  ->withoutOverlapping();
     })

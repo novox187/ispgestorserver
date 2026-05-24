@@ -28,6 +28,32 @@ class ProcessClientSuspension implements ShouldQueue
 
     public function handle(ClientSuspensionService $suspension, AutoBillingService $billing): void
     {
+        // Lectura fresca: bypass del cache para garantizar que un cambio
+        // reciente en `enabled` se respete en el siguiente disparo del job.
+        AutomationSetting::flushCache();
+        $automation = AutomationSetting::getCached('client_suspension');
+
+        $isEnabled = (bool) ($automation->enabled ?? false);
+
+        Log::info('ProcessClientSuspension: estado de configuración al iniciar.', [
+            'enabled'         => $isEnabled,
+            'has_setting_row' => $automation !== null,
+            'params'          => $automation?->params ?? [],
+            'schedule_type'   => $automation?->schedule_type,
+            'schedule_config' => $automation?->schedule_config,
+            'last_run_at'     => $automation?->last_run_at?->toIso8601String(),
+        ]);
+
+        if (!$automation) {
+            Log::warning('ProcessClientSuspension: no existe el registro AutomationSetting "client_suspension". Job abortado.');
+            return;
+        }
+
+        if (!$isEnabled) {
+            Log::info('ProcessClientSuspension: la Suspensión Automática de Clientes está DESACTIVADA. Ningún cliente será suspendido en esta ejecución.');
+            return;
+        }
+
         $graceDays = (int) AutomationSetting::getParam(
             'client_suspension',
             'grace_days',
@@ -35,10 +61,7 @@ class ProcessClientSuspension implements ShouldQueue
         );
 
         // updateQuietly evita generar entradas de auditoría por cada ejecución del job
-        $automation = AutomationSetting::getCached('client_suspension');
-        if ($automation) {
-            $automation->updateQuietly(['last_run_at' => now()]);
-        }
+        $automation->updateQuietly(['last_run_at' => now()]);
 
         $overdueInvoices = Invoice::with(['client.wallet'])
             ->where('status', Invoice::STATUS_FAILED)
