@@ -30,6 +30,11 @@ class DatabaseSeeder extends Seeder
             // 5. Automatizaciones (workers/schedulers)
             AutomationSettingsSeeder::class,
 
+            // 6. Notificaciones (rehidrata canales y rutas desde .env si las
+            // tablas están vacías). Útil tras un migrate:fresh para no perder
+            // la configuración del panel.
+            NotificationSettingsSeeder::class,
+
             // --- Seeders de prueba (datos ficticios) ---
             // ClientSeeder::class,
             // ClientPlanSeeder::class,

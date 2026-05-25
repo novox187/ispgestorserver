@@ -4,6 +4,7 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schema;
+use App\Jobs\MonitorMikrotikConnectivityJob;
 use App\Services\AutomationSettingsService;
 use App\Services\MikroTikQueueSyncService;
 use App\Services\MikroTikService;
@@ -25,6 +26,18 @@ try {
 } catch (\Throwable $e) {
     // Silencioso: build time o DB offline. En runtime real el scheduler
     // se vuelve a invocar cada minuto y reaplica.
+}
+
+// ─── Monitoreo de conectividad MikroTik ──────────────────────────────────────
+// Verifica cada router activo cada 5 minutos. Tras N fallos consecutivos
+// (config: notifications.mikrotik_monitor.consecutive_failures) emite una
+// alerta CRITICAL al canal correspondiente.
+if (config('notifications.mikrotik_monitor.enabled', true)) {
+    app(Schedule::class)
+        ->job(new MonitorMikrotikConnectivityJob())
+        ->everyFiveMinutes()
+        ->withoutOverlapping()
+        ->name('mikrotik-connectivity-monitor');
 }
 
 Artisan::command('inspire', function () {

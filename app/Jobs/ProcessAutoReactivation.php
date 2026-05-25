@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\NotifiesWorkerSummary;
 use App\Models\Client;
 use App\Models\Invoice;
 use App\Services\AutoBillingService;
@@ -12,10 +13,14 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class ProcessAutoReactivation implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    // No usamos notifyWorkerSummary aquí porque este job es per-cliente y puede
+    // dispararse decenas de veces al día — generaría ruido. Solo notificamos
+    // fallos persistentes mediante failed().
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, NotifiesWorkerSummary;
 
     public int $tries   = 3;
     public int $backoff = 60;
@@ -65,5 +70,14 @@ class ProcessAutoReactivation implements ShouldQueue
         if ($allPaid) {
             $suspension->reactivateClient($this->client, 'Pago completado tras recarga de wallet');
         }
+    }
+
+    public function failed(Throwable $exception): void
+    {
+        $this->notifyWorkerFailure(
+            workerName: 'ProcessAutoReactivation',
+            exception:  $exception,
+            objective:  "Reactivar cliente #{$this->client->id} tras recarga de wallet",
+        );
     }
 }

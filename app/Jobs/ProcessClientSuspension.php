@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\NotifiesWorkerSummary;
 use App\Models\AutomationSetting;
 use App\Models\Invoice;
 use App\Services\AutoBillingService;
@@ -12,10 +13,11 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class ProcessClientSuspension implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, NotifiesWorkerSummary;
 
     /** Intentos antes de enviar a failed_jobs */
     public int $tries = 3;
@@ -131,6 +133,28 @@ class ProcessClientSuspension implements ShouldQueue
             }
         }
 
+        $summary = [
+            'suspended'  => $suspended,
+            'recovered'  => $recovered,
+            'errors'     => $errors,
+            'grace_days' => $graceDays,
+        ];
+
         Log::info("ProcessClientSuspension finalizado. Suspendidos: {$suspended}, Recuperados: {$recovered}, Errores: {$errors}.");
+
+        $this->notifyWorkerSummary(
+            workerName: 'ProcessClientSuspension',
+            result:     $summary,
+            objective:  'Suspender servicios de clientes con facturas vencidas',
+        );
+    }
+
+    public function failed(Throwable $exception): void
+    {
+        $this->notifyWorkerFailure(
+            workerName: 'ProcessClientSuspension',
+            exception:  $exception,
+            objective:  'Suspender servicios de clientes con facturas vencidas',
+        );
     }
 }

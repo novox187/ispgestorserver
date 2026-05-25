@@ -29,6 +29,7 @@ use App\Http\Controllers\SettingController;
 use App\Http\Controllers\Admin\SettingController as AdminSettingController;
 use App\Http\Controllers\Admin\AutomationController as AdminAutomationController;
 use App\Http\Controllers\Admin\ClientWhitelistController as AdminClientWhitelistController;
+use App\Http\Controllers\Admin\NotificationSettingsController as AdminNotificationSettingsController;
 
 // ── Broadcasting Auth (Reverb / Pusher) ──────────────────────────────────────
 // Acepta tokens de cliente Y de empleado a través de auth:sanctum
@@ -122,6 +123,17 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
     Route::put('/invoices/{invoice}', [AdminInvoiceController::class, 'update'])->middleware('permission:facturas.editar');
     Route::patch('/invoices/{invoice}', [AdminInvoiceController::class, 'update'])->middleware('permission:facturas.editar');
     Route::delete('/invoices/{invoice}', [AdminInvoiceController::class, 'destroy'])->middleware('permission:facturas.eliminar');
+
+    // Notificaciones (canales, ruteo, pruebas, historial)
+    Route::prefix('notifications')->group(function () {
+        Route::get('/catalog', [AdminNotificationSettingsController::class, 'catalog'])->middleware('permission:configuracion.ver');
+        Route::get('/channels', [AdminNotificationSettingsController::class, 'listChannels'])->middleware('permission:configuracion.ver');
+        Route::put('/channels/{key}', [AdminNotificationSettingsController::class, 'updateChannel'])->middleware('permission:configuracion.gestionar');
+        Route::post('/channels/{key}/test', [AdminNotificationSettingsController::class, 'sendTest'])->middleware('permission:configuracion.gestionar');
+        Route::get('/routes', [AdminNotificationSettingsController::class, 'listRoutes'])->middleware('permission:configuracion.ver');
+        Route::put('/routes', [AdminNotificationSettingsController::class, 'replaceRoutes'])->middleware('permission:configuracion.gestionar');
+        Route::get('/logs', [AdminNotificationSettingsController::class, 'logs'])->middleware('permission:configuracion.ver');
+    });
 
     // Automatizaciones (workers, schedulers)
     Route::get('/automations', [AdminAutomationController::class, 'index'])->middleware('permission:configuracion.ver');

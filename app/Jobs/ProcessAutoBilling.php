@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\NotifiesWorkerSummary;
 use App\Models\AutomationSetting;
 use App\Services\AutoBillingService;
 use Illuminate\Bus\Queueable;
@@ -10,6 +11,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * Cobros automáticos — procesa el pago de facturas próximas a vencer y reintentos
@@ -19,7 +21,7 @@ use Illuminate\Support\Facades\Log;
  */
 class ProcessAutoBilling implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, NotifiesWorkerSummary;
 
     public int $tries   = 2;
     public int $backoff = 300;
@@ -80,13 +82,30 @@ class ProcessAutoBilling implements ShouldQueue
             }
         }
 
-        Log::info('ProcessAutoBilling finalizado.', [
+        $summary = [
             'total_processed'      => count($processed),
             'successful'           => $successful,
             'failed'               => $failed,
             'retried_successfully' => $result['retried_successfully'] ?? 0,
             'skipped_amount'       => $result['skipped_amount'] ?? 0,
             'skipped_max_retries'  => $result['skipped_max_retries'] ?? 0,
-        ]);
+        ];
+
+        Log::info('ProcessAutoBilling finalizado.', $summary);
+
+        $this->notifyWorkerSummary(
+            workerName: 'ProcessAutoBilling',
+            result:     $summary,
+            objective:  'Cobrar facturas próximas a vencer y reintentar fallidas',
+        );
+    }
+
+    public function failed(Throwable $exception): void
+    {
+        $this->notifyWorkerFailure(
+            workerName: 'ProcessAutoBilling',
+            exception:  $exception,
+            objective:  'Cobrar facturas próximas a vencer y reintentar fallidas',
+        );
     }
 }

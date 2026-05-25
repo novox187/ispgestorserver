@@ -17,16 +17,25 @@ class MikrotikRouter extends Model
         'is_active',
         'last_loaded_at',
         'last_applied_at',
+        'connectivity_status',
+        'last_health_check_at',
+        'last_connected_at',
+        'last_disconnected_at',
+        'consecutive_failures',
     ];
 
     protected $hidden = ['password'];
 
     protected $casts = [
-        'is_active'       => 'boolean',
-        'port'            => 'integer',
-        'last_loaded_at'  => 'datetime',
-        'last_applied_at' => 'datetime',
-        'password'        => 'encrypted',
+        'is_active'            => 'boolean',
+        'port'                 => 'integer',
+        'last_loaded_at'       => 'datetime',
+        'last_applied_at'      => 'datetime',
+        'last_health_check_at' => 'datetime',
+        'last_connected_at'    => 'datetime',
+        'last_disconnected_at' => 'datetime',
+        'consecutive_failures' => 'integer',
+        'password'             => 'encrypted',
     ];
 
     public function filterRules(): HasMany
