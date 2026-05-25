@@ -227,7 +227,7 @@ class Invoice extends Model
         return match ($this->status) {
             self::STATUS_PAID => 'Pagada',
             self::STATUS_PENDING => $this->isOverdue() ? 'Vencida' : 'Pendiente',
-            self::STATUS_FAILED => 'Fallida',
+            self::STATUS_FAILED => 'Pago fallido — saldo insuficiente',
             self::STATUS_CANCELLED => 'Cancelada',
             default => 'Borrador',
         };

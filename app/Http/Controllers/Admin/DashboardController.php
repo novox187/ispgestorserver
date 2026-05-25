@@ -35,9 +35,12 @@ class DashboardController extends Controller
             )
             ->first();
 
+        // Las facturas "failed" (cobro automático fallido por saldo insuficiente)
+        // siguen requiriendo gestión de cobro, por lo que se contabilizan junto
+        // con las pendientes en las métricas del dashboard.
         $invoiceSummary = [
-            'pending_count'        => Invoice::pending()->count(),
-            'pending_amount'       => (float) Invoice::pending()->sum('total_amount'),
+            'pending_count'        => Invoice::pendingOrFailed()->count(),
+            'pending_amount'       => (float) Invoice::pendingOrFailed()->sum('total_amount'),
             'overdue_count'        => Invoice::overdue()->count(),
             'invoiced_this_month'  => (float) ($monthlyRow->invoiced_this_month ?? 0),
             'paid_this_month'      => (float) ($monthlyRow->paid_this_month ?? 0),
