@@ -45,3 +45,53 @@ function something()
 {
     // ..
 }
+
+/**
+ * Crea un Employee con el rol `super_admin`, el cual bypassa
+ * todas las comprobaciones del middleware `permission:*`.
+ *
+ * Reutilizable en todos los tests de Feature que necesitan
+ * autenticarse contra endpoints administrativos.
+ */
+function makeSuperAdminEmployee(array $attributes = []): \App\Models\Employee
+{
+    $role = \App\Models\Role::firstOrCreate(
+        ['slug' => 'super_admin'],
+        ['nombre' => 'Super Admin', 'descripcion' => '']
+    );
+
+    return \App\Models\Employee::factory()->create(array_merge(
+        ['role_id' => $role->id],
+        $attributes,
+    ));
+}
+
+/**
+ * Inserta la configuración mínima válida del módulo de facturación,
+ * tal y como la espera `App\Services\InvoiceConfigValidator`.
+ *
+ * Necesario para cualquier test que dispare la generación de facturas
+ * (manual o automática) o que llegue a `configCheck`, ya que el
+ * controlador rechaza con 422 cuando la configuración no es válida.
+ */
+function seedValidInvoiceConfig(): void
+{
+    $rows = [
+        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_name',            'value' => 'Iron Link S.A.S.', 'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_ruc',             'value' => '1790012345001',    'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_address',         'value' => 'Calle 1',          'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_city',            'value' => 'Quito',            'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_country',         'value' => 'Ecuador',          'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_email',           'value' => 'a@ironlink.com',   'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'tax',      'key' => 'tax_rate',               'value' => '0.15',             'data_type' => 'float',  'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'tax',      'key' => 'tax_name',               'value' => 'IVA',              'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'currency', 'key' => 'currency_code',          'value' => 'USD',              'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'currency', 'key' => 'currency_symbol',        'value' => '$',                'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'legal',    'key' => 'sri_establishment_code', 'value' => '001',              'data_type' => 'string', 'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'legal',    'key' => 'sri_emission_point',     'value' => '001',              'data_type' => 'string', 'is_public' => true],
+    ];
+
+    foreach ($rows as $row) {
+        \App\Models\Setting::create(array_merge($row, ['description' => '']));
+    }
+}

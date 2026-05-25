@@ -3,14 +3,42 @@
 use App\Models\Client;
 use App\Models\ClientPlan;
 use App\Models\Employee;
+use App\Models\InternetServiceProvider;
+use App\Models\IspConnection;
 use App\Models\Plan;
 use App\Services\MikroTikQueueSyncService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
 uses(RefreshDatabase::class);
 
+/**
+ * Garantiza que existan conexiones ISP con capacidad disponible
+ * para que la validación `ISP_CAPACITY_EXHAUSTED` no dispare en
+ * tests que no buscan ejercitarla.
+ */
+function seedAmpleIspCapacity(): void
+{
+    $isp = InternetServiceProvider::query()->create([
+        'company_name' => 'ISP Test Mikrotik',
+        'is_active'    => true,
+    ]);
+
+    IspConnection::query()->create([
+        'isp_id'         => $isp->id,
+        'bandwidth_down' => 1000,
+        'bandwidth_up'   => 1000,
+        'ratio'          => '1:1',
+        'contract_date'  => now()->toDateString(),
+        'billing_day'    => 1,
+        'billing_cycle'  => 'monthly',
+        'monthly_price'  => 0,
+        'interface_name' => null,
+        'status'         => 'active',
+    ]);
+}
+
 it('exige ip válida al crear cliente si se asigna un plan', function () {
-    $employee = Employee::factory()->create();
+    $employee = makeSuperAdminEmployee();
     $plan = Plan::factory()->create();
 
     $payload = [
@@ -31,7 +59,9 @@ it('exige ip válida al crear cliente si se asigna un plan', function () {
 });
 
 it('revierte cambios en DB si falla la sincronización con MikroTik al editar', function () {
-    $employee = Employee::factory()->create();
+    seedAmpleIspCapacity();
+
+    $employee = makeSuperAdminEmployee();
     $plan = Plan::factory()->create();
     $client = Client::factory()->create([
         'full_name' => 'Cliente Original',

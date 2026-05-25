@@ -99,7 +99,7 @@ class FakeMikroTikService extends MikroTikService
 it('crea la cola del cliente con formato nombre_normalizado_documento', function () {
     $routerClient = Mockery::mock(RouterClient::class);
     $mikrotik = new FakeMikroTikService($routerClient);
-    $service = new MikroTikQueueSyncService($mikrotik);
+    $service = new MikroTikQueueSyncService($mikrotik, new \App\Services\IspCapacityService($mikrotik));
 
     $plan = Plan::factory()->create([
         'name' => 'Plan Test',
@@ -138,7 +138,7 @@ it('crea la cola del cliente con formato nombre_normalizado_documento', function
 it('renombra y actualiza la cola del cliente al editar nombre/documento', function () {
     $routerClient = Mockery::mock(RouterClient::class);
     $mikrotik = new FakeMikroTikService($routerClient);
-    $service = new MikroTikQueueSyncService($mikrotik);
+    $service = new MikroTikQueueSyncService($mikrotik, new \App\Services\IspCapacityService($mikrotik));
 
     $plan = Plan::factory()->create([
         'name' => 'Plan Edit',
@@ -185,7 +185,7 @@ it('renombra y actualiza la cola del cliente al editar nombre/documento', functi
 it('evita crear cola nueva si la existente se puede resolver por identidad previa aunque mikrotik_queue_id sea null', function () {
     $routerClient = Mockery::mock(RouterClient::class);
     $mikrotik = new FakeMikroTikService($routerClient);
-    $service = new MikroTikQueueSyncService($mikrotik);
+    $service = new MikroTikQueueSyncService($mikrotik, new \App\Services\IspCapacityService($mikrotik));
 
     $plan = Plan::factory()->create([
         'name' => 'Plan Prev',
@@ -240,7 +240,7 @@ it('evita crear cola nueva si la existente se puede resolver por identidad previ
 it('requiere confirmación para reemplazar cuando existen cola vieja y nueva', function () {
     $routerClient = Mockery::mock(RouterClient::class);
     $mikrotik = new FakeMikroTikService($routerClient);
-    $service = new MikroTikQueueSyncService($mikrotik);
+    $service = new MikroTikQueueSyncService($mikrotik, new \App\Services\IspCapacityService($mikrotik));
 
     $plan = Plan::factory()->create([
         'name' => 'Plan Dup',

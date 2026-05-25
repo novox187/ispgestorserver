@@ -17,7 +17,6 @@ test('interpreta valores numéricos sin sufijo como bps cuando son grandes (Rout
         {
             $ref = new ReflectionClass($this->svc);
             $m = $ref->getMethod('toMbps');
-            $m->setAccessible(true);
             return (float) $m->invoke($this->svc, $v);
         }
     };
@@ -35,7 +34,6 @@ test('mantiene sufijos K/M/G correctamente', function () {
         {
             $ref = new ReflectionClass($this->svc);
             $m = $ref->getMethod('toMbps');
-            $m->setAccessible(true);
             return (float) $m->invoke($this->svc, $v);
         }
     };

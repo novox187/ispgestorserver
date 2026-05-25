@@ -4,25 +4,25 @@ use App\Models\Setting;
 use App\Services\InvoiceConfigValidator;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
-uses(RefreshDatabase::class);
+uses(Tests\TestCase::class, RefreshDatabase::class);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function seedAllRequired(): void
 {
     $rows = [
-        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_name',                'value' => 'Iron Link S.A.S.',        'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_nit',                 'value' => '900.123.456-7',            'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_address',             'value' => 'Calle 10 # 20-30',         'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_city',                'value' => 'Bogotá',                   'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_country',             'value' => 'Colombia',                 'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_email',               'value' => 'test@ironlink.com',        'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'tax',      'key' => 'tax_rate',                   'value' => '0.15',                     'data_type' => 'float',   'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'tax',      'key' => 'tax_name',                   'value' => 'IVA',                      'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'currency', 'key' => 'currency_code',              'value' => 'COP',                      'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'currency', 'key' => 'currency_symbol',            'value' => '$',                        'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'legal',    'key' => 'invoice_resolution_number',  'value' => '18764000001',              'data_type' => 'string',  'is_public' => true],
-        ['module' => 'facturacion', 'group' => 'legal',    'key' => 'invoice_resolution_date',    'value' => '2024-01-01',               'data_type' => 'string',  'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_name',             'value' => 'Iron Link S.A.S.',  'data_type' => 'string',  'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_ruc',              'value' => '1790012345001',     'data_type' => 'string',  'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_address',          'value' => 'Calle 10 # 20-30',  'data_type' => 'string',  'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_city',             'value' => 'Quito',             'data_type' => 'string',  'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_country',          'value' => 'Ecuador',           'data_type' => 'string',  'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'issuer',   'key' => 'issuer_email',            'value' => 'test@ironlink.com', 'data_type' => 'string',  'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'tax',      'key' => 'tax_rate',                'value' => '0.15',              'data_type' => 'float',   'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'tax',      'key' => 'tax_name',                'value' => 'IVA',               'data_type' => 'string',  'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'currency', 'key' => 'currency_code',           'value' => 'USD',               'data_type' => 'string',  'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'currency', 'key' => 'currency_symbol',         'value' => '$',                 'data_type' => 'string',  'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'legal',    'key' => 'sri_establishment_code',  'value' => '001',               'data_type' => 'string',  'is_public' => true],
+        ['module' => 'facturacion', 'group' => 'legal',    'key' => 'sri_emission_point',      'value' => '001',               'data_type' => 'string',  'is_public' => true],
     ];
 
     foreach ($rows as $row) {
@@ -53,12 +53,12 @@ it('assertValid no lanza excepción cuando la configuración está completa', fu
 
 it('detecta configuraciones faltantes y bloquea con mensaje específico', function () {
     // Solo insertar issuer parcial — omitir tax, currency y legal
-    Setting::create(['module' => 'facturacion', 'group' => 'issuer', 'key' => 'issuer_name',    'value' => 'Iron Link', 'data_type' => 'string', 'is_public' => true, 'description' => '']);
-    Setting::create(['module' => 'facturacion', 'group' => 'issuer', 'key' => 'issuer_nit',     'value' => '900.1',     'data_type' => 'string', 'is_public' => true, 'description' => '']);
-    Setting::create(['module' => 'facturacion', 'group' => 'issuer', 'key' => 'issuer_address', 'value' => 'Calle 1',   'data_type' => 'string', 'is_public' => true, 'description' => '']);
-    Setting::create(['module' => 'facturacion', 'group' => 'issuer', 'key' => 'issuer_city',    'value' => 'Bogotá',    'data_type' => 'string', 'is_public' => true, 'description' => '']);
-    Setting::create(['module' => 'facturacion', 'group' => 'issuer', 'key' => 'issuer_country', 'value' => 'Colombia',  'data_type' => 'string', 'is_public' => true, 'description' => '']);
-    Setting::create(['module' => 'facturacion', 'group' => 'issuer', 'key' => 'issuer_email',   'value' => 'a@b.com',   'data_type' => 'string', 'is_public' => true, 'description' => '']);
+    Setting::create(['module' => 'facturacion', 'group' => 'issuer', 'key' => 'issuer_name',    'value' => 'Iron Link',     'data_type' => 'string', 'is_public' => true, 'description' => '']);
+    Setting::create(['module' => 'facturacion', 'group' => 'issuer', 'key' => 'issuer_ruc',     'value' => '1790012345001', 'data_type' => 'string', 'is_public' => true, 'description' => '']);
+    Setting::create(['module' => 'facturacion', 'group' => 'issuer', 'key' => 'issuer_address', 'value' => 'Calle 1',       'data_type' => 'string', 'is_public' => true, 'description' => '']);
+    Setting::create(['module' => 'facturacion', 'group' => 'issuer', 'key' => 'issuer_city',    'value' => 'Quito',         'data_type' => 'string', 'is_public' => true, 'description' => '']);
+    Setting::create(['module' => 'facturacion', 'group' => 'issuer', 'key' => 'issuer_country', 'value' => 'Ecuador',       'data_type' => 'string', 'is_public' => true, 'description' => '']);
+    Setting::create(['module' => 'facturacion', 'group' => 'issuer', 'key' => 'issuer_email',   'value' => 'a@b.com',       'data_type' => 'string', 'is_public' => true, 'description' => '']);
     // tax, currency, legal missing
 
     $result = (new InvoiceConfigValidator())->validate();
@@ -151,26 +151,26 @@ it('detecta tax_rate no numérico como inválido', function () {
     expect($result['invalid']['tax'])->toHaveKey('tax_rate');
 });
 
-it('detecta fecha de resolución en el futuro como inválida', function () {
+it('detecta código de establecimiento SRI inválido (000)', function () {
     seedAllRequired();
-    Setting::where('key', 'invoice_resolution_date')->update(['value' => '2099-12-31']);
+    Setting::where('key', 'sri_establishment_code')->update(['value' => '000']);
 
     $result = (new InvoiceConfigValidator())->validate();
 
     expect($result['valid'])->toBeFalse();
     expect($result['invalid'])->toHaveKey('legal');
-    expect($result['invalid']['legal'])->toHaveKey('invoice_resolution_date');
-    expect($result['messages'][0])->toContain('invoice_resolution_date');
+    expect($result['invalid']['legal'])->toHaveKey('sri_establishment_code');
+    expect($result['messages'][0])->toContain('sri_establishment_code');
 });
 
-it('detecta formato de fecha de resolución inválido', function () {
+it('detecta formato de punto de emisión SRI inválido', function () {
     seedAllRequired();
-    Setting::where('key', 'invoice_resolution_date')->update(['value' => '31-12-2024']);
+    Setting::where('key', 'sri_emission_point')->update(['value' => '12']); // sólo 2 dígitos
 
     $result = (new InvoiceConfigValidator())->validate();
 
     expect($result['valid'])->toBeFalse();
-    expect($result['invalid']['legal'])->toHaveKey('invoice_resolution_date');
+    expect($result['invalid']['legal'])->toHaveKey('sri_emission_point');
 });
 
 it('detecta email del emisor inválido', function () {
@@ -192,9 +192,10 @@ it('acepta tax_rate exactamente en 0 (sin impuesto)', function () {
     expect($result['valid'])->toBeTrue();
 });
 
-it('acepta fecha de resolución de hoy como válida', function () {
+it('acepta códigos SRI válidos al límite del rango', function () {
     seedAllRequired();
-    Setting::where('key', 'invoice_resolution_date')->update(['value' => now()->toDateString()]);
+    Setting::where('key', 'sri_establishment_code')->update(['value' => '001']);
+    Setting::where('key', 'sri_emission_point')->update(['value' => '999']);
 
     $result = (new InvoiceConfigValidator())->validate();
 

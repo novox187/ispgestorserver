@@ -10,8 +10,11 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 uses(RefreshDatabase::class);
 
 it('can generate automatic invoices successfully', function () {
+    // Arrange: Seed valid invoice configuration so the validator does not block
+    seedValidInvoiceConfig();
+
     // Arrange: Create employee
-    $employee = Employee::factory()->create();
+    $employee = makeSuperAdminEmployee();
 
     // Arrange: Create active plan for client
     $client = Client::factory()->create();

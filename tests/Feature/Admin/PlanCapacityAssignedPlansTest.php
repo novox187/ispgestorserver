@@ -51,7 +51,7 @@ it('permite crear un plan dentro de la capacidad disponible por planes', functio
         'upload_speed' => 100,
     ]);
 
-    $employee = Employee::factory()->create();
+    $employee = makeSuperAdminEmployee();
 
     $this->actingAs($employee, 'sanctum')
         ->postJson('/api/admin/planes', [
@@ -82,7 +82,7 @@ it('rechaza crear un plan que excede la capacidad disponible por planes', functi
         'upload_speed' => 100,
     ]);
 
-    $employee = Employee::factory()->create();
+    $employee = makeSuperAdminEmployee();
 
     $this->actingAs($employee, 'sanctum')
         ->postJson('/api/admin/planes', [
@@ -115,7 +115,7 @@ it('calcula correctamente capacidad con múltiples planes existentes', function 
         'upload_speed' => 70,
     ]);
 
-    $employee = Employee::factory()->create();
+    $employee = makeSuperAdminEmployee();
 
     $res = $this->actingAs($employee, 'sanctum')
         ->getJson('/api/admin/planes/summary')

@@ -63,7 +63,7 @@ it('permite crear un cliente en un plan con capacidad aunque no existan conexion
     ]);
     app()->instance(MikroTikQueueSyncService::class, $mock);
 
-    $employee = Employee::factory()->create();
+    $employee = makeSuperAdminEmployee();
 
     $this->actingAs($employee, 'sanctum')
         ->postJson('/api/admin/clientes/crear', clientePayloadBase([
@@ -85,7 +85,7 @@ it('rechaza crear un cliente cuando el plan ha alcanzado su capacidad máxima (r
 
     llenarPlanConClientes($plan, 2); // plan lleno
 
-    $employee = Employee::factory()->create();
+    $employee = makeSuperAdminEmployee();
 
     $this->actingAs($employee, 'sanctum')
         ->postJson('/api/admin/clientes/crear', clientePayloadBase([
@@ -127,7 +127,7 @@ it('permite crear cliente en plan B con capacidad aunque plan A (mismo ISP) est�
     ]);
     app()->instance(MikroTikQueueSyncService::class, $mock);
 
-    $employee = Employee::factory()->create();
+    $employee = makeSuperAdminEmployee();
 
     $this->actingAs($employee, 'sanctum')
         ->postJson('/api/admin/clientes/crear', clientePayloadBase([
@@ -159,7 +159,7 @@ it('permite crear el último cliente disponible en un plan (slot exacto)', funct
     ]);
     app()->instance(MikroTikQueueSyncService::class, $mock);
 
-    $employee = Employee::factory()->create();
+    $employee = makeSuperAdminEmployee();
 
     $this->actingAs($employee, 'sanctum')
         ->postJson('/api/admin/clientes/crear', clientePayloadBase([

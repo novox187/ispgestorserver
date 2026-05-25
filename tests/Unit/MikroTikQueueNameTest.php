@@ -1,14 +1,17 @@
 <?php
 
 use App\Models\Client;
+use App\Services\IspCapacityService;
 use App\Services\MikroTikQueueSyncService;
 use App\Services\MikroTikService;
 use RouterOS\Client as RouterClient;
 
+uses(Tests\TestCase::class);
+
 test('client queue name usa nombre_normalizado_documento', function () {
     $routerClient = Mockery::mock(RouterClient::class);
     $mikrotik = new MikroTikService($routerClient);
-    $service = new MikroTikQueueSyncService($mikrotik);
+    $service = new MikroTikQueueSyncService($mikrotik, new IspCapacityService($mikrotik));
 
     $client = new Client([
         'full_name' => 'Juan Pérez',
@@ -17,7 +20,6 @@ test('client queue name usa nombre_normalizado_documento', function () {
 
     $ref = new ReflectionClass($service);
     $method = $ref->getMethod('buildClientQueueName');
-    $method->setAccessible(true);
     $name = $method->invoke($service, $client);
 
     expect($name)->toEndWith('_12345678');
@@ -28,7 +30,7 @@ test('client queue name usa nombre_normalizado_documento', function () {
 test('client queue name preserva sufijo del documento al truncar', function () {
     $routerClient = Mockery::mock(RouterClient::class);
     $mikrotik = new MikroTikService($routerClient);
-    $service = new MikroTikQueueSyncService($mikrotik);
+    $service = new MikroTikQueueSyncService($mikrotik, new IspCapacityService($mikrotik));
 
     $client = new Client([
         'full_name' => str_repeat('nombre_muy_largo_', 10),
@@ -37,7 +39,6 @@ test('client queue name preserva sufijo del documento al truncar', function () {
 
     $ref = new ReflectionClass($service);
     $method = $ref->getMethod('buildClientQueueName');
-    $method->setAccessible(true);
     $name = $method->invoke($service, $client);
 
     expect(strlen($name))->toBeLessThanOrEqual(64);
