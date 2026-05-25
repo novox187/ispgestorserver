@@ -13,21 +13,17 @@ uses(RefreshDatabase::class);
 beforeEach(function () {
     config(['queue.default' => 'sync']);
     config(['notifications.queue.connection' => null]);
-
-    config(['notifications.enabled' => true]);
-    config(['notifications.channels.telegram.enabled' => true]);
-    config(['notifications.channels.telegram.config' => [
-        'bot_token'  => 'fake-token',
-        'base_url'   => 'https://api.telegram.org',
-        'timeout'    => 2,
-        'parse_mode' => 'MarkdownV2',
-    ]]);
-    config(['notifications.severity_routes' => [
-        'critical' => [['channel' => 'telegram', 'address' => 'chat-critical']],
-        'summary'  => [['channel' => 'telegram', 'address' => 'chat-summary']],
-        'info'     => [['channel' => 'telegram', 'address' => 'chat-info']],
-    ]]);
     config(['notifications.deduplication.store' => 'array']);
+    config(['cache.default' => 'array']);
+
+    seedTelegramChannel(
+        botToken: 'fake-token',
+        defaultAddress: 'chat-default',
+        routes: [
+            NotificationCategory::WORKER_SUMMARY->value => 'chat-summary',
+            NotificationCategory::WORKER_FAILURE->value => 'chat-critical',
+        ]
+    );
 
     Http::fake([
         'api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]], 200),

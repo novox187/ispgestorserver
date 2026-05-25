@@ -68,15 +68,25 @@ class SendNotificationJob implements ShouldQueue
 
         $log->incrementAttempts();
 
-        $channel = $registry->get($recipient->channelKey);
+        try {
+            $channel = $registry->get($recipient->channelKey);
+        } catch (\App\Notifications\Core\Exceptions\ChannelNotConfiguredException $e) {
+            $log->markFailed(
+                "channel '{$recipient->channelKey}' no está registrado en config/notifications.php: " . $e->getMessage()
+            );
+            return;
+        }
 
         if (!$channel->isEnabled()) {
-            $log->markFailed('channel disabled or misconfigured');
+            $log->markFailed(
+                "channel '{$recipient->channelKey}' está deshabilitado o le faltan credenciales en BD "
+                . '(notification_channel_configs)'
+            );
             return;
         }
 
         if (!$channel->supports($message)) {
-            $log->markFailed('channel does not support this message');
+            $log->markFailed("channel '{$recipient->channelKey}' does not support this message");
             return;
         }
 

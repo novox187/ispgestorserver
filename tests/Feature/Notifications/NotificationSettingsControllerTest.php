@@ -13,20 +13,8 @@ uses(RefreshDatabase::class);
 beforeEach(function () {
     config(['queue.default' => 'sync']);
     config(['notifications.queue.connection' => null]);
-    config(['notifications.enabled' => true]);
-    config(['notifications.channels.telegram.enabled' => true]);
-    config(['notifications.channels.telegram.config' => [
-        'bot_token'  => 'env-token',
-        'base_url'   => 'https://api.telegram.org',
-        'timeout'    => 5,
-        'parse_mode' => 'MarkdownV2',
-    ]]);
-    config(['notifications.severity_routes' => [
-        'critical' => [['channel' => 'telegram', 'address' => 'chat-critical']],
-        'summary'  => [['channel' => 'telegram', 'address' => 'chat-summary']],
-        'info'     => [['channel' => 'telegram', 'address' => 'chat-info']],
-    ]]);
     config(['notifications.deduplication.store' => 'array']);
+    config(['cache.default' => 'array']);
 
     $admin = makeSuperAdminEmployee();
     Sanctum::actingAs($admin, ['*']);
@@ -206,11 +194,16 @@ it('lista logs y permite filtrar por canal y status', function () {
         ->assertJsonCount(1, 'logs');
 });
 
-it('respeta rutas de BD sobre severity_routes (DB gana)', function () {
+it('enruta exclusivamente con datos de BD (sin fallback a env/config)', function () {
+    // Aún si hay valores en env que insinúan otro destinatario, el módulo
+    // debe ignorarlos y usar lo que esté en notification_event_routes.
+    putenv('TELEGRAM_CHAT_SUMMARY=env-fallback-should-not-be-used');
+
     NotificationChannelConfig::create([
         'channel_key' => 'telegram',
         'enabled' => true,
         'credentials' => ['bot_token' => 'real-token'],
+        'settings' => ['default_address' => 'db-default'],
     ]);
     NotificationEventRoute::create([
         'category' => NotificationCategory::WORKER_SUMMARY->value,

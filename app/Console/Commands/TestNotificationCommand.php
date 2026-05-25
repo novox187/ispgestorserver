@@ -59,7 +59,10 @@ class TestNotificationCommand extends Command
         $logs = Notify::dispatch($message);
 
         if (empty($logs)) {
-            $this->warn('No se generaron logs. El módulo puede estar deshabilitado (NOTIFICATIONS_ENABLED).');
+            $this->warn(
+                'No se generaron logs. Verifique que el canal esté habilitado en la BD '
+                . '(notification_channel_configs) y con credenciales válidas desde el panel.'
+            );
             return self::SUCCESS;
         }
 

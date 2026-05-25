@@ -5,23 +5,33 @@
 | Configuración del módulo de notificaciones del sistema
 |--------------------------------------------------------------------------
 |
-| Este archivo declara los canales disponibles, el mapeo severidad → destinatarios
-| y los parámetros transversales (cola, deduplicación, reintentos). Modificarlo
-| permite habilitar/inhabilitar canales o agregar nuevos sin tocar el dispatcher.
+| IMPORTANTE: este archivo **NO** contiene parámetros del canal (bot tokens,
+| chat IDs, parse modes, addresses, etc.). Todos esos valores viven en la
+| base de datos:
+|
+|   - notification_channel_configs (credenciales y settings por canal)
+|   - notification_event_routes    (rutas por categoría → canal/dirección)
+|
+| Aquí solo declaramos:
+|   - el **registro de drivers** disponibles (clases que implementan
+|     NotificationChannel), análogo a `config/queue.php` o `config/mail.php`.
+|   - parámetros estructurales del módulo (cola, reintentos, dedup TTLs,
+|     umbrales del monitor MikroTik) que son código operativo, no
+|     configuración de notificación expuesta al admin.
+|
+| Para agregar un nuevo canal: implementar NotificationChannel y registrar
+| la clase en `channels`. Las credenciales se administran desde el panel.
 |
 */
 
 return [
 
-    'enabled' => env('NOTIFICATIONS_ENABLED', true),
-
     'queue' => [
-        // Si no se define explícitamente, se hereda la conexión por defecto de
-        // Laravel (config('queue.default')). En tests eso es 'sync', en
-        // producción será 'database' u otra. Definir aquí solo si el módulo de
-        // notificaciones debe usar una conexión distinta a la del resto de la app.
-        'connection' => env('NOTIFICATIONS_QUEUE_CONNECTION'),
-        'name'       => env('NOTIFICATIONS_QUEUE_NAME', 'notifications'),
+        // Hereda la conexión por defecto de Laravel (config('queue.default')).
+        // En tests vale 'sync', en producción 'database'. No exponemos esto a env
+        // del módulo de notificaciones para evitar configuraciones divergentes.
+        'connection' => null,
+        'name'       => 'notifications',
     ],
 
     'retry' => [
@@ -30,7 +40,8 @@ return [
     ],
 
     'deduplication' => [
-        'store'               => env('NOTIFICATIONS_DEDUP_STORE', env('CACHE_STORE', 'database')),
+        // null → usa el store por defecto de Laravel (config('cache.default')).
+        'store'               => null,
         'default_ttl_seconds' => 300,
         'per_category'        => [
             'mikrotik_connectivity' => 600,
@@ -42,85 +53,39 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Canales disponibles (Strategy)
+    | Registro de drivers de canal (Strategy)
     |--------------------------------------------------------------------------
     |
-    | Cada canal debe implementar App\Notifications\Core\Contracts\NotificationChannel.
-    | Para agregar un nuevo canal (email, slack, sms, ...), basta con crear la clase
-    | y registrarla aquí — el dispatcher la descubre dinámicamente.
+    | Solo declaramos la clase del driver. La habilitación, credenciales y
+    | settings de cada canal se administran 100% desde el panel y se almacenan
+    | en `notification_channel_configs`.
     |
     */
     'channels' => [
         'telegram' => [
-            'driver'  => \App\Notifications\Channels\Telegram\TelegramChannel::class,
-            'enabled' => env('TELEGRAM_ENABLED', true),
-            'config'  => [
-                'bot_token' => env('TELEGRAM_BOT_TOKEN'),
-                'base_url'  => env('TELEGRAM_BASE_URL', 'https://api.telegram.org'),
-                'timeout'   => (int) env('TELEGRAM_TIMEOUT', 10),
-                'parse_mode'=> env('TELEGRAM_PARSE_MODE', 'MarkdownV2'),
-            ],
+            'driver' => \App\Notifications\Channels\Telegram\TelegramChannel::class,
         ],
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Ruteo por severidad
-    |--------------------------------------------------------------------------
-    |
-    | Para cada severidad se define una lista de destinos {channel => address}.
-    | Una notificación puede entregarse a múltiples destinos simultáneamente.
-    |
-    */
-    'severity_routes' => [
-        'critical' => [
-            ['channel' => 'telegram', 'address' => env('TELEGRAM_CHAT_CRITICAL')],
-        ],
-        'summary' => [
-            ['channel' => 'telegram', 'address' => env('TELEGRAM_CHAT_SUMMARY')],
-        ],
-        'info' => [
-            ['channel' => 'telegram', 'address' => env('TELEGRAM_CHAT_INFO')],
-        ],
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Overrides por categoría
-    |--------------------------------------------------------------------------
-    |
-    | Permite enrutar categorías específicas a destinos distintos a los de su
-    | severidad. Por ejemplo, podríamos enviar todos los WORKER_FAILURE al chat
-    | crítico aunque su severidad base sea SUMMARY.
-    |
-    */
-    'category_overrides' => [
-        // 'worker_failure' => [
-        //     ['channel' => 'telegram', 'address' => env('TELEGRAM_CHAT_CRITICAL')],
-        // ],
     ],
 
     /*
     |--------------------------------------------------------------------------
     | Monitoreo MikroTik
     |--------------------------------------------------------------------------
+    |
+    | Umbrales operativos del job de health-check. No son parámetros del canal
+    | ni del envío; son código de comportamiento del monitor.
+    |
     */
     'mikrotik_monitor' => [
-        'enabled'               => env('NOTIFICATIONS_MIKROTIK_MONITOR', true),
-        'consecutive_failures'  => (int) env('MIKROTIK_FAILURE_THRESHOLD', 2),
-        'health_check_timeout'  => (int) env('MIKROTIK_HEALTH_TIMEOUT', 3),
+        'enabled'              => true,
+        'consecutive_failures' => 2,
+        'health_check_timeout' => 3,
     ],
 
     /*
     |--------------------------------------------------------------------------
     | Meta-fallo
     |--------------------------------------------------------------------------
-    |
-    | Cuando un envío falla en todos sus reintentos (status=exhausted) el
-    | dispatcher emite una notificación CRITICAL sobre el meta-fallo. Para
-    | evitar recursión infinita, esta meta-alerta solo se loguea si tampoco
-    | puede entregarse.
-    |
     */
     'meta_failure_notification' => true,
 ];

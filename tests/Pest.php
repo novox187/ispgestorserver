@@ -95,3 +95,45 @@ function seedValidInvoiceConfig(): void
         \App\Models\Setting::create(array_merge($row, ['description' => '']));
     }
 }
+
+/**
+ * Inserta la configuración del canal Telegram directamente en la BD para los
+ * tests del módulo de notificaciones. El módulo ya no lee credenciales/chat IDs
+ * de variables de entorno: estos valores deben venir de
+ * `notification_channel_configs`.
+ *
+ * @param array<string,string|null> $routes  Mapa categoría → chat_id que crea
+ *        filas en `notification_event_routes`. Pasar `null` como valor para
+ *        que la ruta caiga al `default_address` del canal.
+ */
+function seedTelegramChannel(
+    string $botToken = 'fake-token',
+    ?string $defaultAddress = 'chat-default',
+    string $parseMode = 'MarkdownV2',
+    array $routes = [],
+    bool $enabled = true,
+): void {
+    $settings = ['parse_mode' => $parseMode];
+    if ($defaultAddress !== null) {
+        $settings['default_address'] = $defaultAddress;
+    }
+
+    \App\Models\NotificationChannelConfig::updateOrCreate(
+        ['channel_key' => 'telegram'],
+        [
+            'enabled'     => $enabled,
+            'credentials' => $botToken !== '' ? ['bot_token' => $botToken] : [],
+            'settings'    => $settings,
+        ]
+    );
+
+    foreach ($routes as $category => $addressOverride) {
+        \App\Models\NotificationEventRoute::updateOrCreate(
+            ['category' => $category, 'channel_key' => 'telegram'],
+            [
+                'enabled'          => true,
+                'address_override' => $addressOverride,
+            ]
+        );
+    }
+}

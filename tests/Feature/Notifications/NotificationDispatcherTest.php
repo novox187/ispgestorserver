@@ -16,33 +16,31 @@ beforeEach(function () {
     // sync para que SendNotificationJob corra en el mismo tick que dispatch().
     config(['queue.default' => 'sync']);
     config(['notifications.queue.connection' => null]);
-
-    config(['notifications.enabled' => true]);
-    config(['notifications.channels.telegram.enabled' => true]);
-    config(['notifications.channels.telegram.config' => [
-        'bot_token'  => 'fake-token',
-        'base_url'   => 'https://api.telegram.org',
-        'timeout'    => 5,
-        'parse_mode' => 'MarkdownV2',
-    ]]);
-    config(['notifications.severity_routes' => [
-        'critical' => [['channel' => 'telegram', 'address' => 'chat-critical']],
-        'summary'  => [['channel' => 'telegram', 'address' => 'chat-summary']],
-        'info'     => [['channel' => 'telegram', 'address' => 'chat-info']],
-    ]]);
-    config(['notifications.category_overrides' => []]);
     config(['notifications.deduplication.store' => 'array']);
     config(['cache.default' => 'array']);
+
+    // Toda la config del canal vive en la BD (no en env ni config).
+    seedTelegramChannel(
+        botToken: 'fake-token',
+        defaultAddress: 'chat-default',
+        routes: [
+            NotificationCategory::WORKER_SUMMARY->value  => 'chat-summary',
+            NotificationCategory::SERVICE_HEALTH->value  => 'chat-critical',
+        ]
+    );
 
     Http::fake([
         'api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 42]], 200),
     ]);
 });
 
-function makeMessage(NotificationSeverity $severity = NotificationSeverity::SUMMARY, ?string $dedupe = null): NotificationMessage
-{
+function makeMessage(
+    NotificationSeverity $severity = NotificationSeverity::SUMMARY,
+    ?string $dedupe = null,
+    NotificationCategory $category = NotificationCategory::WORKER_SUMMARY,
+): NotificationMessage {
     return new NotificationMessage(
-        category:  NotificationCategory::WORKER_SUMMARY,
+        category:  $category,
         severity:  $severity,
         title:     'Resumen de prueba',
         body:      'Cuerpo de prueba',
@@ -51,8 +49,8 @@ function makeMessage(NotificationSeverity $severity = NotificationSeverity::SUMM
     );
 }
 
-it('enruta al chat de la severidad correspondiente y persiste log SENT', function () {
-    Notify::dispatch(makeMessage(NotificationSeverity::CRITICAL, 'unique:1'));
+it('enruta al chat configurado en la BD y persiste log SENT', function () {
+    Notify::dispatch(makeMessage(NotificationSeverity::CRITICAL, 'unique:1', NotificationCategory::SERVICE_HEALTH));
 
     $log = NotificationLog::first();
     expect($log)->not->toBeNull()
@@ -71,49 +69,59 @@ it('crea un log DUPLICATED cuando la clave ya fue vista', function () {
         ->and($statuses)->toContain(NotificationStatus::DUPLICATED->value);
 });
 
-it('marca FAILED cuando no hay destinatarios resueltos', function () {
-    config(['notifications.severity_routes.summary' => []]);
+it('marca FAILED cuando no hay rutas en BD para la categoría', function () {
+    \App\Models\NotificationEventRoute::query()->delete();
+    \Illuminate\Support\Facades\Cache::flush();
 
     Notify::dispatch(makeMessage(NotificationSeverity::SUMMARY, 'no-recipients'));
 
     $log = NotificationLog::first();
     expect($log->status)->toBe(NotificationStatus::FAILED->value)
-        ->and($log->last_error)->toContain('no recipients');
+        ->and($log->last_error)->toContain('sin destinatarios');
 });
 
-it('no genera filas cuando el módulo está globalmente deshabilitado', function () {
-    config(['notifications.enabled' => false]);
+it('cae al default_address del canal cuando una ruta no tiene address_override', function () {
+    \App\Models\NotificationEventRoute::where('category', NotificationCategory::WORKER_SUMMARY->value)
+        ->update(['address_override' => null]);
+    \Illuminate\Support\Facades\Cache::flush();
 
-    Notify::dispatch(makeMessage());
+    Notify::dispatch(makeMessage(NotificationSeverity::SUMMARY, 'fallback-default'));
 
-    expect(NotificationLog::count())->toBe(0);
+    $log = NotificationLog::where('status', NotificationStatus::SENT->value)->first();
+    expect($log)->not->toBeNull()
+        ->and($log->recipient)->toBe('chat-default');
 });
 
-it('envía a múltiples canales cuando la severidad tiene varios destinos', function () {
-    config(['notifications.severity_routes.summary' => [
-        ['channel' => 'telegram', 'address' => 'chat-summary'],
-        ['channel' => 'telegram', 'address' => 'chat-mirror'],
-    ]]);
-
-    Notify::dispatch(makeMessage(NotificationSeverity::SUMMARY, 'multi:1'));
-
-    $recipients = NotificationLog::where('status', NotificationStatus::SENT->value)
-        ->pluck('recipient')
-        ->toArray();
-
-    expect($recipients)->toContain('chat-summary')
-        ->and($recipients)->toContain('chat-mirror');
-});
-
-it('respeta category_overrides sobre severity_routes', function () {
-    config(['notifications.category_overrides' => [
-        NotificationCategory::WORKER_SUMMARY->value => [
-            ['channel' => 'telegram', 'address' => 'chat-override'],
-        ],
-    ]]);
+it('respeta address_override sobre default_address del canal', function () {
+    // El UNIQUE (category, channel_key) impide duplicar rutas. La forma real
+    // de tener "varios destinatarios" en este modelo es registrar distintos
+    // canales (telegram + email + ...). Lo que sí podemos validar es que el
+    // address_override gana sobre el default_address del canal.
+    \App\Models\NotificationEventRoute::where('category', NotificationCategory::WORKER_SUMMARY->value)
+        ->update(['address_override' => 'override-wins']);
+    \Illuminate\Support\Facades\Cache::flush();
 
     Notify::dispatch(makeMessage(NotificationSeverity::SUMMARY, 'override:1'));
 
     $log = NotificationLog::where('status', NotificationStatus::SENT->value)->first();
-    expect($log->recipient)->toBe('chat-override');
+    expect($log)->not->toBeNull()
+        ->and($log->recipient)->toBe('override-wins');
+});
+
+it('no usa variables de entorno: con BD vacía no resuelve ningún destinatario', function () {
+    // Limpiamos todo lo que el helper sembró: si el módulo siguiera leyendo
+    // de env caería al fallback. Como no lo hace, el log debe quedar FAILED.
+    \App\Models\NotificationEventRoute::query()->delete();
+    \App\Models\NotificationChannelConfig::query()->delete();
+    \Illuminate\Support\Facades\Cache::flush();
+
+    // Aunque haya valores en env, no deben influir.
+    putenv('TELEGRAM_BOT_TOKEN=should-be-ignored');
+    putenv('TELEGRAM_CHAT_CRITICAL=should-be-ignored');
+
+    Notify::dispatch(makeMessage(NotificationSeverity::SUMMARY, 'no-env-fallback'));
+
+    $log = NotificationLog::first();
+    expect($log->status)->toBe(NotificationStatus::FAILED->value)
+        ->and($log->recipient)->toBe('n/a');
 });

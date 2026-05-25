@@ -14,24 +14,19 @@ uses(RefreshDatabase::class);
 beforeEach(function () {
     config(['queue.default' => 'sync']);
     config(['notifications.queue.connection' => null]);
-
-    config(['notifications.enabled' => true]);
-    config(['notifications.channels.telegram.enabled' => true]);
-    config(['notifications.channels.telegram.config' => [
-        'bot_token'  => 'test-token',
-        'base_url'   => 'https://api.telegram.org',
-        'timeout'    => 2,
-        'parse_mode' => 'MarkdownV2',
-    ]]);
-    config(['notifications.severity_routes' => [
-        'critical' => [['channel' => 'telegram', 'address' => 'chat-x']],
-        'summary'  => [['channel' => 'telegram', 'address' => 'chat-x']],
-        'info'     => [['channel' => 'telegram', 'address' => 'chat-x']],
-    ]]);
     config(['notifications.retry.max_attempts' => 3]);
     config(['notifications.retry.backoff_seconds' => [0, 0, 0]]);
     config(['notifications.meta_failure_notification' => false]);
     config(['notifications.deduplication.store' => 'array']);
+    config(['cache.default' => 'array']);
+
+    seedTelegramChannel(
+        botToken: 'test-token',
+        defaultAddress: 'chat-x',
+        routes: [
+            NotificationCategory::SERVICE_HEALTH->value => 'chat-x',
+        ]
+    );
 });
 
 function dispatchOnce(string $dedupe = 'one-shot'): NotificationMessage
@@ -139,8 +134,13 @@ it('failed() handler marca el log como EXHAUSTED', function () {
     expect($log->refresh()->status)->toBe(NotificationStatus::EXHAUSTED->value);
 });
 
-it('isEnabled retorna false sin bot_token configurado', function () {
-    config(['notifications.channels.telegram.config.bot_token' => '']);
+it('isEnabled retorna false sin bot_token en BD', function () {
+    // Builder::update() NO aplica el cast `encrypted:array`; hay que usar
+    // la instancia del modelo para que se cifre correctamente.
+    $row = \App\Models\NotificationChannelConfig::where('channel_key', 'telegram')->first();
+    $row->credentials = [];
+    $row->save();
+    \Illuminate\Support\Facades\Cache::flush();
 
     Http::fake([
         'api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]], 200),
@@ -150,5 +150,23 @@ it('isEnabled retorna false sin bot_token configurado', function () {
 
     $log = NotificationLog::first();
     expect($log->status)->toBe(NotificationStatus::FAILED->value)
-        ->and($log->last_error)->toContain('disabled');
+        ->and($log->last_error)->toContain('faltan credenciales');
+});
+
+it('falla con mensaje claro cuando el canal está deshabilitado en BD', function () {
+    \App\Models\NotificationChannelConfig::where('channel_key', 'telegram')->update(['enabled' => false]);
+    \Illuminate\Support\Facades\Cache::flush();
+
+    Http::fake([
+        'api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 1]], 200),
+    ]);
+
+    dispatchOnce('telegram:disabled');
+
+    // Como el canal está deshabilitado, NotificationConfigRepository::routesForCategory
+    // descarta sus rutas y el dispatcher registra "sin destinatarios".
+    $log = NotificationLog::first();
+    expect($log->status)->toBe(NotificationStatus::FAILED->value)
+        ->and($log->last_error)->toContain('sin destinatarios');
+    Http::assertNothingSent();
 });

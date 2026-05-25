@@ -5,7 +5,6 @@ namespace App\Notifications\Core;
 use App\Models\NotificationLog;
 use App\Notifications\Core\Enums\NotificationStatus;
 use App\Notifications\Core\Jobs\SendNotificationJob;
-use App\Notifications\Core\Messages\ChannelRecipient;
 use App\Notifications\Core\Messages\NotificationMessage;
 use Illuminate\Support\Facades\Log;
 
@@ -35,14 +34,6 @@ class NotificationDispatcher
      */
     public function dispatch(NotificationMessage $message): array
     {
-        if (!(bool) config('notifications.enabled', true)) {
-            Log::debug('NotificationDispatcher: módulo deshabilitado globalmente, mensaje descartado.', [
-                'category' => $message->category->value,
-                'title'    => $message->title,
-            ]);
-            return [];
-        }
-
         $dedupeKey = $message->effectiveDedupeKey();
 
         if (!$this->deduplicator->tryAcquire($dedupeKey, $message->category)) {
@@ -84,7 +75,9 @@ class NotificationDispatcher
                 'attachments'     => $message->attachments,
                 'status'          => NotificationStatus::FAILED->value,
                 'dedupe_key'      => $dedupeKey,
-                'last_error'      => 'no recipients resolved for severity/category',
+                'last_error'      => "sin destinatarios para categoría '{$message->category->value}': "
+                                     . 'configure rutas en notification_event_routes con address_override '
+                                     . 'o un default_address en notification_channel_configs',
             ]);
 
             Log::warning('NotificationDispatcher: sin destinatarios resueltos.', [
