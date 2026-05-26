@@ -142,6 +142,38 @@ class AutomationSettingsSeeder extends Seeder
                     ],
                 ],
             ],
+            [
+                'key'         => 'mikrotik_connectivity_monitor',
+                'name'        => 'Monitor de Conectividad MikroTik',
+                'description' => 'Verifica periódicamente la conectividad con cada router MikroTik activo. Tras N fallos consecutivos emite una alerta CRITICAL al canal correspondiente; al recuperarse emite un INFO.',
+                'job_class'   => \App\Jobs\MonitorMikrotikConnectivityJob::class,
+                'queue'       => 'default',
+                'enabled'     => true,
+                'schedule_type'   => 'every_five_minutes',
+                'schedule_config' => [],
+                'params'          => [
+                    'consecutive_failures_threshold' => 2,
+                    'health_check_timeout_seconds'   => 3,
+                ],
+                'params_schema'   => [
+                    'consecutive_failures_threshold' => [
+                        'type'        => 'integer',
+                        'label'       => 'Fallos consecutivos para alertar',
+                        'description' => 'Número de chequeos fallidos seguidos antes de marcar el router como desconectado y emitir alerta. Evita falsos positivos por timeouts puntuales.',
+                        'min'         => 1,
+                        'max'         => 10,
+                        'required'    => true,
+                    ],
+                    'health_check_timeout_seconds' => [
+                        'type'        => 'integer',
+                        'label'       => 'Timeout del chequeo (segundos)',
+                        'description' => 'Tiempo máximo de espera por chequeo individual contra el router. Si el RouterOS no responde en este lapso, el chequeo cuenta como fallo.',
+                        'min'         => 1,
+                        'max'         => 30,
+                        'required'    => true,
+                    ],
+                ],
+            ],
         ];
 
         foreach ($automations as $automation) {

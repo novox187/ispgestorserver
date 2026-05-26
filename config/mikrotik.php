@@ -1,12 +1,22 @@
 <?php
 
+/*
+|--------------------------------------------------------------------------
+| Configuración del módulo MikroTik
+|--------------------------------------------------------------------------
+|
+| Las credenciales y datos de conexión de cada router viven en la tabla
+| `mikrotik_routers` y se administran desde el panel (MikroTik → Dispositivos).
+|
+| El sistema usa el router marcado como `is_primary=true` para todas las
+| operaciones por defecto. No hay variables de entorno `MIKROTIK_*` para
+| credenciales — se eliminaron a favor de la BD.
+|
+| Aquí solo queda el flag global para deshabilitar el módulo en entornos
+| donde no se quiera levantar conexiones RouterOS (p. ej. tests, CI).
+|
+*/
+
 return [
-    'enabled' => (bool) env('MIKROTIK_ENABLED', true),
-    'host' => env('MIKROTIK_HOST', '10.0.0.2'),
-    'user' => env('MIKROTIK_USER', 'laravel_user'),
-    'pass' => env('MIKROTIK_PASS', 'Erty3216'),
-    'port' => (int) env('MIKROTIK_PORT', 8728),
-    'timeout' => (int) env('MIKROTIK_TIMEOUT', 3),
-    'attempts' => (int) env('MIKROTIK_ATTEMPTS', 1),
-    'delay' => (int) env('MIKROTIK_DELAY', 0),
+    'enabled' => true,
 ];

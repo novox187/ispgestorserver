@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Models\AutomationSetting;
 use App\Models\MikrotikRouter;
 use App\Notifications\Core\Facades\Notify;
 use App\Notifications\Messages\MikrotikDisconnectedNotification;
@@ -19,10 +20,12 @@ use Throwable;
  * Job programado que verifica la conectividad de todos los routers MikroTik
  * activos en la base de datos.
  *
- * Política de alertado:
- *  - Se requieren N fallos consecutivos (config: notifications.mikrotik_monitor.consecutive_failures)
- *    antes de marcar `disconnected` y disparar la alerta crítica. Esto evita
- *    falsos positivos por timeouts puntuales.
+ * Política de alertado (params editables desde Configuraciones → Workers
+ * Automáticos → Monitor de Conectividad MikroTik):
+ *  - `consecutive_failures_threshold`: cantidad de fallos seguidos antes de
+ *    marcar `disconnected` y emitir alerta. Evita falsos positivos.
+ *  - `health_check_timeout_seconds`: timeout del chequeo individual.
+ *
  *  - La transición disconnected → connected emite un mensaje informativo.
  *  - El deduplicador suprime alertas repetidas dentro de la ventana (10 min por defecto).
  */
@@ -30,22 +33,34 @@ class MonitorMikrotikConnectivityJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
+    public const SETTING_KEY = 'mikrotik_connectivity_monitor';
+
     public int $tries = 1;
     public int $timeout = 300;
 
     public function handle(MikrotikHealthChecker $checker): void
     {
-        if (!(bool) config('notifications.mikrotik_monitor.enabled', true)) {
+        $setting = AutomationSetting::getCached(self::SETTING_KEY);
+        if ($setting && !$setting->enabled) {
             return;
         }
 
-        $threshold = max(1, (int) config('notifications.mikrotik_monitor.consecutive_failures', 2));
+        $threshold = max(1, (int) AutomationSetting::getParam(
+            self::SETTING_KEY,
+            'consecutive_failures_threshold',
+            2
+        ));
+        $timeoutSeconds = max(1, (int) AutomationSetting::getParam(
+            self::SETTING_KEY,
+            'health_check_timeout_seconds',
+            3
+        ));
 
         $routers = MikrotikRouter::query()->where('is_active', true)->get();
 
         foreach ($routers as $router) {
             try {
-                $this->checkSingle($router, $checker, $threshold);
+                $this->checkSingle($router, $checker, $threshold, $timeoutSeconds);
             } catch (Throwable $e) {
                 Log::error('MonitorMikrotikConnectivityJob: excepción procesando router.', [
                     'router_id' => $router->id,
@@ -55,9 +70,13 @@ class MonitorMikrotikConnectivityJob implements ShouldQueue
         }
     }
 
-    private function checkSingle(MikrotikRouter $router, MikrotikHealthChecker $checker, int $threshold): void
-    {
-        $result = $checker->check($router);
+    private function checkSingle(
+        MikrotikRouter $router,
+        MikrotikHealthChecker $checker,
+        int $threshold,
+        int $timeoutSeconds,
+    ): void {
+        $result = $checker->check($router, $timeoutSeconds);
         $now    = now();
 
         if ($result['ok']) {

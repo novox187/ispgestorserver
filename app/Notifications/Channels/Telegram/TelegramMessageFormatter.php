@@ -86,11 +86,13 @@ class TelegramMessageFormatter implements NotificationFormatter
                 continue;
             }
 
-            // Escapar `.`, `!`, `-`, `+`, `=`, `>`, `{`, `}` que aparecen como texto.
-            // Mantenemos `_`, `*`, `[`, `]`, `(`, `)`, `~`, `\``, `#`, `|` que pueden
-            // tener uso sintáctico legítimo en MarkdownV2.
+            // Escapar todos los reservados de MarkdownV2 que aparecen como texto.
+            // Solo preservamos `_`, `*`, `[`, `]` y `` ` `` que los productores usan
+            // intencionalmente como sintaxis (negrita, código inline, links futuros).
+            // El resto (.!-+=>{}()~#|) se escapa siempre — Telegram rechaza el mensaje
+            // si encuentra alguno sin escapar fuera de su contexto sintáctico.
             $out[] = preg_replace_callback(
-                '/[\.!\-+=>\{\}]/u',
+                '/[\.!\-+=>\{\}()~#|]/u',
                 fn($m) => '\\' . $m[0],
                 $line
             );

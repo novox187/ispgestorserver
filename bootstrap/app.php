@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\EnsureEmployeeSuperAdmin;
+use App\Http\Middleware\EnsurePrimaryRouter;
 use App\Http\Middleware\CheckPermission;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Application;
@@ -21,8 +22,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->prepend(\Illuminate\Http\Middleware\HandleCors::class);
 
         $middleware->alias([
-            'super_admin' => EnsureEmployeeSuperAdmin::class,
-            'permission'  => CheckPermission::class,
+            'super_admin'      => EnsureEmployeeSuperAdmin::class,
+            'permission'       => CheckPermission::class,
+            'primary_router'   => EnsurePrimaryRouter::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

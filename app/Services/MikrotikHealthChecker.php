@@ -24,17 +24,21 @@ class MikrotikHealthChecker
     }
 
     /**
+     * @param int|null $timeoutOverride  Permite al caller (job, comando) imponer
+     *        un timeout configurado en runtime sin reconstruir el servicio.
+     *        Si es null se usa el valor del constructor.
      * @return array{ok: bool, error: ?string}
      */
-    public function check(MikrotikRouter $router): array
+    public function check(MikrotikRouter $router, ?int $timeoutOverride = null): array
     {
+        $timeout = $timeoutOverride !== null ? max(1, $timeoutOverride) : $this->timeoutSeconds;
         try {
             $config = new Config([
                 'host'     => $router->host,
                 'user'     => $router->username,
                 'pass'     => $router->password,
                 'port'     => (int) ($router->port ?: 8728),
-                'timeout'  => $this->timeoutSeconds,
+                'timeout'  => $timeout,
                 'attempts' => 1,
             ]);
             $client = new Client($config);

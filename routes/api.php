@@ -18,6 +18,7 @@ use App\Http\Controllers\Admin\EmployeeController as AdminEmployeeController;
 use App\Http\Controllers\Admin\RoleController as AdminRoleController;
 use App\Http\Controllers\Admin\PermissionController as AdminPermissionController;
 use App\Http\Controllers\Admin\DashboardController;
+use App\Http\Controllers\Admin\SystemBootstrapController;
 use App\Http\Controllers\Admin\InvoiceController as AdminInvoiceController;
 use App\Http\Controllers\Admin\TransactionController as AdminTransactionController;
 use App\Http\Controllers\Admin\ChatController as AdminChatController;
@@ -42,6 +43,10 @@ Route::get('/user', [AdminEmployeeController::class, 'profile'])->middleware('au
 
 // ── Rutas de administración ──────────────────────────────────────────────────
 Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
+
+    // Estado de bootstrap del sistema (¿hay router primary configurado?).
+    // El frontend lo consulta al login para decidir si mostrar el banner.
+    Route::get('/system-bootstrap', [SystemBootstrapController::class, 'status']);
 
     // Dashboard
     Route::get('/dashboard/full-stats', [DashboardController::class, 'fullStats']);
@@ -191,7 +196,9 @@ Route::post('/employee/login', [AuthEmployeeController::class, 'login']);
 Route::post('/employee/logout', [AuthEmployeeController::class, 'logout'])->middleware('auth:sanctum');
 
 // ── MikroTik ─────────────────────────────────────────────────────────────────
-Route::prefix('mikrotik')->group(function () {
+// Todas estas rutas operan contra el router primary y requieren que exista.
+// Si no hay router configurado el middleware `primary_router` retorna 423.
+Route::prefix('mikrotik')->middleware('primary_router')->group(function () {
     Route::get('/system', [MikroTikController::class, 'systemInfo']);
     Route::get('/wireless-clients', [MikroTikController::class, 'wirelessClients']);
     Route::get('/queue-list', [MikroTikController::class, 'queueList']);

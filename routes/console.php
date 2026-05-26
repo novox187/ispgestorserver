@@ -4,7 +4,6 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schema;
-use App\Jobs\MonitorMikrotikConnectivityJob;
 use App\Services\AutomationSettingsService;
 use App\Services\MikroTikQueueSyncService;
 use App\Services\MikroTikService;
@@ -28,17 +27,9 @@ try {
     // se vuelve a invocar cada minuto y reaplica.
 }
 
-// ─── Monitoreo de conectividad MikroTik ──────────────────────────────────────
-// Verifica cada router activo cada 5 minutos. Tras N fallos consecutivos
-// (config: notifications.mikrotik_monitor.consecutive_failures) emite una
-// alerta CRITICAL al canal correspondiente.
-if (config('notifications.mikrotik_monitor.enabled', true)) {
-    app(Schedule::class)
-        ->job(new MonitorMikrotikConnectivityJob())
-        ->everyFiveMinutes()
-        ->withoutOverlapping()
-        ->name('mikrotik-connectivity-monitor');
-}
+// El monitor de conectividad MikroTik se programa vía AutomationSettings (key:
+// 'mikrotik_connectivity_monitor'). Sus parámetros (umbral, timeout, frecuencia)
+// se editan desde Configuraciones → Workers Automáticos.
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());

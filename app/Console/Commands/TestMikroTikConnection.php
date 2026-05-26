@@ -3,6 +3,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\MikrotikRouter;
 use App\Services\MikroTikService;
 use Illuminate\Console\Command;
 use RouterOS\Query;
@@ -10,26 +11,26 @@ use RouterOS\Query;
 class TestMikroTikConnection extends Command
 {
     protected $signature = 'mikrotik:test {--trace : Muestra el stack trace completo} {--write-test : Prueba permisos de escritura en /queue/simple}';
-    protected $description = 'Test MikroTik API connection';
+    protected $description = 'Test MikroTik API connection (usa el router primary configurado en BD)';
 
     public function handle(MikroTikService $mikrotik): int
     {
         try {
-            $cfg = [
-                'host' => (string) config('mikrotik.host'),
-                'port' => (int) config('mikrotik.port'),
-                'user' => (string) config('mikrotik.user'),
-                'timeout' => (int) config('mikrotik.timeout'),
-                'attempts' => (int) config('mikrotik.attempts'),
-                'delay' => (int) config('mikrotik.delay'),
-                'pass_set' => !empty((string) config('mikrotik.pass')),
-            ];
+            $router = MikrotikRouter::primaryRouter();
+            if (!$router) {
+                $this->error('❌ No hay router primary configurado en BD. Cree uno desde el panel: Mikrotik → Dispositivos.');
+                return self::FAILURE;
+            }
 
             $this->info('Testing MikroTik connection...');
-            $this->line("Target: {$cfg['host']}:{$cfg['port']} (user: {$cfg['user']}, timeout: {$cfg['timeout']}s, pass: " . ($cfg['pass_set'] ? 'set' : 'empty') . ')');
+            $this->line(
+                "Target: {$router->host}:{$router->port} "
+                . "(router='{$router->name}', user={$router->username}, "
+                . 'active=' . ($router->is_active ? 'yes' : 'no') . ')'
+            );
 
             if (!$mikrotik->getClient()) {
-                $this->error('❌ Connection failed: Cliente MikroTik no inicializado (revisa configuración/credenciales/alcance de red).');
+                $this->error('❌ Connection failed: Cliente MikroTik no inicializado (revisa credenciales del router primary y alcance de red).');
                 return self::FAILURE;
             }
 
