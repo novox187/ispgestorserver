@@ -1,12 +1,16 @@
 <?php
 
 use App\Models\Client;
+use App\Models\ClientPlan;
 use App\Models\ClientWhitelist;
 use App\Models\Employee;
+use App\Models\Plan;
 use App\Models\Role;
+use App\Services\ClientSuspensionService;
 use App\Services\ClientWhitelistService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Mockery\MockInterface;
 
 uses(RefreshDatabase::class);
 
@@ -17,6 +21,26 @@ function unitMakeAdmin(): Employee
         ['nombre' => 'Super Admin', 'descripcion' => '']
     );
     return Employee::factory()->create(['role_id' => $role->id]);
+}
+
+function unitMakeSuspendedClientWithPlan(): Client
+{
+    $client = Client::factory()->create(['service_status' => 'SUSPENDED']);
+
+    $suffix = uniqid();
+    $plan   = Plan::factory()->create(['name' => "Plan {$suffix}", 'slug' => "plan-{$suffix}"]);
+
+    ClientPlan::create([
+        'client_id'         => $client->id,
+        'plan_id'           => $plan->id,
+        'start_date'        => now()->subMonths(2)->toDateString(),
+        'billing_cycle'     => 'monthly',
+        'status'            => 'suspended',
+        'next_billing_date' => now()->addMonth()->toDateString(),
+        'current_price'     => 30.00,
+    ]);
+
+    return $client;
 }
 
 describe('ClientWhitelistService::isProtected', function () {
@@ -96,6 +120,46 @@ describe('ClientWhitelistService::addClient', function () {
         $second = app(ClientWhitelistService::class)->addClient($client, $admin, 'segundo');
 
         expect($second->id)->not->toBe($first->id);
+        expect($client->fresh()->isWhitelisted())->toBeTrue();
+    });
+});
+
+describe('ClientWhitelistService::addClient — reactivación automática', function () {
+
+    it('reactiva el servicio y los planes de un cliente suspendido al incluirlo', function () {
+        $admin  = unitMakeAdmin();
+        $client = unitMakeSuspendedClientWithPlan();
+
+        app(ClientWhitelistService::class)->addClient($client, $admin, 'protegido y reactivado');
+
+        // service_status es un ENUM en mayúsculas; isActive() abstrae el casing.
+        expect($client->fresh()->isActive())->toBeTrue();
+        expect(ClientPlan::where('client_id', $client->id)->where('status', 'active')->count())->toBe(1);
+        expect(ClientPlan::where('client_id', $client->id)->where('status', 'suspended')->count())->toBe(0);
+    });
+
+    it('no altera el estado de un cliente que ya estaba activo', function () {
+        $admin  = unitMakeAdmin();
+        $client = Client::factory()->active()->create();
+
+        app(ClientWhitelistService::class)->addClient($client, $admin, 'protegido activo');
+
+        expect($client->fresh()->isActive())->toBeTrue();
+    });
+
+    it('mantiene la inclusión aunque la reactivación falle (best-effort)', function () {
+        $admin  = unitMakeAdmin();
+        $client = unitMakeSuspendedClientWithPlan();
+
+        // La reactivación es un efecto secundario: si lanza, no debe revertir la
+        // inclusión en la lista blanca (que ya está persistida).
+        $this->mock(ClientSuspensionService::class, function (MockInterface $m) {
+            $m->shouldReceive('reactivateClient')->once()->andThrow(new \RuntimeException('MikroTik caído'));
+        });
+
+        $entry = app(ClientWhitelistService::class)->addClient($client, $admin, 'protegido pese al fallo');
+
+        expect($entry->active)->toBeTrue();
         expect($client->fresh()->isWhitelisted())->toBeTrue();
     });
 });

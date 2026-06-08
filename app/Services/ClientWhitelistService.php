@@ -8,6 +8,7 @@ use App\Models\ClientWhitelist;
 use App\Models\Employee;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class ClientWhitelistService
 {
@@ -57,7 +58,7 @@ class ClientWhitelistService
         ?CarbonInterface $expiresAt = null,
         ?string $ipAddress = null,
     ): ClientWhitelist {
-        return DB::transaction(function () use ($client, $authorizedBy, $reason, $expiresAt, $ipAddress) {
+        $entry = DB::transaction(function () use ($client, $authorizedBy, $reason, $expiresAt, $ipAddress) {
             $existing = ClientWhitelist::where('client_id', $client->id)
                 ->active()
                 ->lockForUpdate()
@@ -88,6 +89,45 @@ class ClientWhitelistService
 
             return $entry->fresh(['authorizedBy', 'client']);
         });
+
+        // Tras persistir la inclusión: si el servicio estaba cortado, se reactiva.
+        // Estar en la lista blanca significa que el cliente NO debe permanecer
+        // suspendido. Se ejecuta fuera de la transacción porque la reactivación
+        // toca MikroTik (red) y no debe alargar el bloqueo de la BD.
+        $this->reactivateIfSuspended($client, $entry);
+
+        return $entry->fresh(['authorizedBy', 'client']);
+    }
+
+    /**
+     * Reactiva el servicio del cliente si estaba suspendido al incluirlo en la
+     * lista blanca. Es un efecto secundario "best-effort": la inclusión ya está
+     * persistida, por lo que un fallo de reactivación (p. ej. MikroTik caído) se
+     * registra pero no revierte la protección.
+     */
+    private function reactivateIfSuspended(Client $client, ClientWhitelist $entry): void
+    {
+        if (!in_array(strtoupper((string) $client->service_status), ['SUSPENDED', 'SUSPENDIDO'], true)) {
+            return;
+        }
+
+        try {
+            // Resolución diferida para romper la dependencia circular:
+            // ClientSuspensionService depende a su vez de este servicio.
+            app(ClientSuspensionService::class)->reactivateClient(
+                $client,
+                "Reactivación automática por inclusión en lista blanca (registro #{$entry->id})",
+            );
+
+            Log::info("ClientWhitelistService: Cliente {$client->id} reactivado automáticamente al entrar a la lista blanca.", [
+                'whitelist_id' => $entry->id,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning(
+                "ClientWhitelistService: no se pudo reactivar al cliente {$client->id} tras incluirlo en la lista blanca: " . $e->getMessage(),
+                ['whitelist_id' => $entry->id]
+            );
+        }
     }
 
     /**
