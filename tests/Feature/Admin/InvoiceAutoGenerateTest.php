@@ -16,8 +16,9 @@ it('can generate automatic invoices successfully', function () {
     // Arrange: Create employee
     $employee = makeSuperAdminEmployee();
 
-    // Arrange: Create active plan for client
-    $client = Client::factory()->create();
+    // Arrange: Create active plan for client (service_status ACTIVE explícito:
+    // la facturación excluye suspendidos/cancelados y el factory lo randomiza).
+    $client = Client::factory()->create(['service_status' => 'ACTIVE']);
     $plan = Plan::factory()->create(['monthly_price' => 100]);
     $clientPlan = ClientPlan::factory()->create([
         'client_id' => $client->id,

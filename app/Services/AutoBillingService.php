@@ -15,6 +15,19 @@ use Illuminate\Support\Str;
 class AutoBillingService
 {
     /**
+     * Estados de servicio que excluyen al cliente de TODA facturación automática.
+     *
+     * Un cliente suspendido (servicio cortado) o dado de baja (cancelado) no
+     * consume el servicio, por lo que ningún proceso automatizado debe emitirle
+     * facturas. La facturación se reanuda únicamente cuando el cliente vuelve a
+     * estar activo. Se incluyen variantes ES/EN por robustez ante datos legados.
+     */
+    public const NON_BILLABLE_SERVICE_STATUSES = [
+        'suspended', 'SUSPENDED', 'SUSPENDIDO',
+        'cancelled', 'CANCELLED', 'CANCELADO',
+    ];
+
+    /**
      * Generar facturas mensuales para todos los clientes activos
      */
     public function generateMonthlyInvoices()
@@ -35,43 +48,24 @@ class AutoBillingService
         $taxRate = $settingService->taxRateFromSnapshot($snapshot);
         $dueDays = $settingService->invoiceDueDaysFromSnapshot($snapshot);
 
-        // Clientes a facturar este mes:
-        //   - cualquiera con al menos un plan ACTIVO, o
-        //   - clientes protegidos por la lista blanca que tengan planes SUSPENDIDOS.
-        //
-        // La lista blanca solo evita el corte del servicio; NO debe detener la
-        // facturación. Un cliente puede haber sido suspendido (sus planes pasan a
-        // 'suspended') ANTES de entrar a la lista blanca, y entrar a la lista no
-        // reactiva esos planes. Sin esta segunda condición esos clientes quedaban
-        // fuera del generador y nunca se les emitía factura.
+        // Solo se factura a clientes con servicio vigente (no suspendidos ni dados
+        // de baja) y únicamente sus planes ACTIVOS. Un cliente con el servicio
+        // cortado no consume, así que no se le emiten facturas; la facturación se
+        // reanuda al reactivarlo. Los clientes en lista blanca se mantienen
+        // activos (se reactivan al incluirlos), por lo que entran por esta vía.
         $clientsWithPlans = Client::query()
-            ->where(function ($q) {
-                $q->whereHas('clientPlans', fn ($p) => $p->where('status', 'active'))
-                  ->orWhere(function ($w) {
-                      $w->whereHas('whitelistEntries', fn ($we) => $we->active())
-                        ->whereHas('clientPlans', fn ($p) => $p->where('status', 'suspended'));
-                  });
-            })
-            ->with([
-                'clientPlans.plan',
-                'whitelistEntries' => fn ($we) => $we->active(),
-            ])
+            ->whereNotIn('service_status', self::NON_BILLABLE_SERVICE_STATUSES)
+            ->whereHas('clientPlans', fn ($p) => $p->where('status', 'active'))
+            ->with(['clientPlans.plan'])
             ->get();
 
         $generatedInvoices = [];
 
         foreach ($clientsWithPlans as $client) {
-            $isWhitelisted = $client->whitelistEntries->isNotEmpty();
-
             foreach ($client->clientPlans as $clientPlan) {
-                // Se facturan los planes ACTIVOS siempre. Los SUSPENDIDOS solo se
-                // facturan cuando el cliente está en la lista blanca (servicio
-                // protegido: se le sigue cobrando). Los planes 'cancelled' o
-                // 'pending' nunca se facturan en este ciclo.
-                $billable = $clientPlan->status === 'active'
-                    || ($isWhitelisted && $clientPlan->status === 'suspended');
-
-                if (!$billable) {
+                // Solo planes ACTIVOS: los suspendidos, cancelados o pendientes no
+                // se facturan en este ciclo.
+                if ($clientPlan->status !== 'active') {
                     continue;
                 }
 
@@ -214,24 +208,15 @@ class AutoBillingService
             'employee'     => $employee?->name,
         ]);
 
-        // Mismo criterio que la generación mensual: además de los clientes con
-        // planes activos, se incluyen los protegidos por la lista blanca con
-        // planes suspendidos (la lista blanca no detiene la facturación, solo el
-        // corte del servicio). Los planes suspendidos se cargan para todos los
-        // candidatos y se filtran por whitelist dentro del bucle.
+        // Mismo criterio que la generación mensual: solo clientes con servicio
+        // vigente (no suspendidos ni dados de baja) y sus planes ACTIVOS.
         $clientsWithPlans = Client::query()
             ->whereNotNull('contract_date')
-            ->where(function ($q) {
-                $q->whereHas('clientPlans', fn ($p) => $p->where('status', 'active'))
-                  ->orWhere(function ($w) {
-                      $w->whereHas('whitelistEntries', fn ($we) => $we->active())
-                        ->whereHas('clientPlans', fn ($p) => $p->where('status', 'suspended'));
-                  });
-            })
+            ->whereNotIn('service_status', self::NON_BILLABLE_SERVICE_STATUSES)
+            ->whereHas('clientPlans', fn ($p) => $p->where('status', 'active'))
             ->with([
-                'clientPlans' => fn ($q) => $q->whereIn('status', ['active', 'suspended']),
+                'clientPlans' => fn ($q) => $q->where('status', 'active'),
                 'clientPlans.plan',
-                'whitelistEntries' => fn ($we) => $we->active(),
             ])
             ->orderBy('id')
             ->get();
@@ -242,26 +227,17 @@ class AutoBillingService
         $errors           = [];
 
         foreach ($clientsWithPlans as $client) {
-            $isWhitelisted = $client->whitelistEntries->isNotEmpty();
-
-            // Planes facturables: activos siempre; suspendidos solo si el cliente
-            // está protegido por la lista blanca.
-            $billablePlans = $client->clientPlans->filter(
-                fn ($cp) => $cp->status === 'active'
-                    || ($isWhitelisted && $cp->status === 'suspended')
-            );
-
             $cycles = $this->computeAllCyclesFromContract($client->contract_date);
 
             $processedClients[] = [
                 'client_id'     => $client->id,
                 'full_name'     => $client->full_name,
                 'contract_date' => optional($client->contract_date)->toDateString(),
-                'plans_count'   => $billablePlans->count(),
+                'plans_count'   => $client->clientPlans->count(),
                 'cycles_total'  => count($cycles),
             ];
 
-            foreach ($billablePlans as $clientPlan) {
+            foreach ($client->clientPlans as $clientPlan) {
                 $clientPlanAborted = false;
 
                 foreach ($cycles as [$cycleStart, $cycleEnd]) {

@@ -46,7 +46,12 @@ function makeClientWithContractDate(string $contractDate, float $price = 100): a
 {
     static $seq = 0;
     $seq++;
-    $client = Client::factory()->create(['contract_date' => $contractDate]);
+    // service_status ACTIVE explícito: la facturación excluye a clientes
+    // suspendidos/cancelados, y el factory randomiza service_status.
+    $client = Client::factory()->create([
+        'contract_date'  => $contractDate,
+        'service_status' => 'ACTIVE',
+    ]);
     $plan   = Plan::factory()->create([
         'monthly_price' => $price,
         'name'          => "Plan Test {$seq}",
@@ -343,7 +348,8 @@ describe('rendimiento del endpoint generate-by-contract', function () {
         // Con today=may 20: cada cliente tiene exactamente 2 ciclos (abr y may).
         for ($i = 1; $i <= $clients; $i++) {
             $client = Client::factory()->create([
-                'contract_date' => '2026-04-' . str_pad((string) (($i % 20) + 1), 2, '0', STR_PAD_LEFT),
+                'contract_date'  => '2026-04-' . str_pad((string) (($i % 20) + 1), 2, '0', STR_PAD_LEFT),
+                'service_status' => 'ACTIVE',
             ]);
             ClientPlan::factory()->create([
                 'client_id'     => $client->id,

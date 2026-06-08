@@ -157,6 +157,107 @@ class ClientSuspensionService
     }
 
     /**
+     * Dar de baja a un cliente (baja lógica / cancelación definitiva).
+     *
+     * Regla de negocio: solo se permite dar de baja a clientes SUSPENDIDOS, es
+     * decir, con el servicio ya cortado. La baja:
+     *   - marca al cliente como 'cancelled' y todos sus planes vigentes como
+     *     'cancelled' (con end_date = hoy), conservando todo el historial;
+     *   - libera los recursos del cliente en MikroTik (elimina sus colas) para
+     *     recuperar capacidad del ISP — best-effort: si MikroTik falla, la baja
+     *     en BD se aplica igualmente y el fallo queda registrado;
+     *   - deja al cliente fuera de TODO proceso automatizado (facturación,
+     *     suspensión y reactivación ya filtran por estado de servicio/plan).
+     *
+     * @return array{success: bool, code?: string, message?: string, already_cancelled?: bool, mikrotik?: array}
+     */
+    public function cancelClient(Client $client, string $reason, ?int $employeeId = null, ?string $ipAddress = null): array
+    {
+        $status = strtoupper((string) $client->service_status);
+
+        if (in_array($status, ['CANCELLED', 'CANCELADO'], true)) {
+            return ['success' => true, 'already_cancelled' => true];
+        }
+
+        if (!in_array($status, ['SUSPENDED', 'SUSPENDIDO'], true)) {
+            return [
+                'success' => false,
+                'code'    => 'NOT_SUSPENDED',
+                'message' => 'Solo se puede dar de baja a clientes que estén suspendidos.',
+            ];
+        }
+
+        // 1) Liberar recursos en MikroTik (eliminar colas) para recuperar capacidad.
+        $client->loadMissing(['clientPlans.plan']);
+        $mkResults = $this->releaseClientNetworkResources($client);
+
+        // 2) BD: marcar cliente y planes como cancelados (se conserva el historial).
+        DB::transaction(function () use ($client, $reason, $employeeId, $ipAddress, $mkResults) {
+            $oldStatus = $client->service_status;
+
+            $client->service_status = 'cancelled';
+            $client->save();
+
+            ClientPlan::where('client_id', $client->id)
+                ->where('status', '!=', 'cancelled')
+                ->update(['status' => 'cancelled', 'end_date' => now()]);
+
+            Audit::create([
+                'table_name' => 'clients',
+                'operation'  => 'CANCEL_OP',
+                'record_id'  => (string) $client->id,
+                'old_values' => ['service_status' => $oldStatus],
+                'new_values' => [
+                    'service_status'  => 'cancelled',
+                    'reason'          => $reason,
+                    'plans_cancelled' => true,
+                    'mikrotik_result' => $mkResults,
+                    'executor'        => $employeeId ? "employee:{$employeeId}" : 'system',
+                    'timestamp'       => now()->toIso8601String(),
+                ],
+                'user_id'    => $employeeId,
+                'ip_address' => $ipAddress ?? '127.0.0.1',
+            ]);
+        });
+
+        Log::info("ClientSuspensionService: Cliente {$client->id} dado de baja. Razón: {$reason}");
+
+        return ['success' => true, 'mikrotik' => $mkResults];
+    }
+
+    /**
+     * Elimina las colas del cliente en MikroTik para liberar capacidad del ISP.
+     * Cada plan se procesa de forma independiente y tolerante a fallos: un error
+     * en MikroTik (p. ej. router caído) no impide completar la baja en la BD.
+     *
+     * @return array<int, array{client_plan_id?: int, success: bool, error?: string}>
+     */
+    private function releaseClientNetworkResources(Client $client): array
+    {
+        try {
+            /** @var \App\Services\MikroTikQueueSyncService $queueSync */
+            $queueSync = app(MikroTikQueueSyncService::class);
+        } catch (\Throwable $e) {
+            Log::warning("ClientSuspensionService: no se pudo resolver el sincronizador de colas para la baja del cliente {$client->id}: " . $e->getMessage());
+            return [['success' => false, 'error' => $e->getMessage()]];
+        }
+
+        $results = [];
+
+        foreach ($client->clientPlans as $clientPlan) {
+            try {
+                $queueSync->removeClientQueueAndRecalculate($client, $clientPlan, $clientPlan->plan);
+                $results[] = ['client_plan_id' => $clientPlan->id, 'success' => true];
+            } catch (\Throwable $e) {
+                Log::warning("ClientSuspensionService: fallo al liberar la cola del cliente {$client->id} (plan {$clientPlan->id}): " . $e->getMessage());
+                $results[] = ['client_plan_id' => $clientPlan->id, 'success' => false, 'error' => $e->getMessage()];
+            }
+        }
+
+        return $results;
+    }
+
+    /**
      * Reactivar el servicio de un cliente.
      *
      * Remueve la IP de la lista 'morosos' en MikroTik y restaura el estado en BD.

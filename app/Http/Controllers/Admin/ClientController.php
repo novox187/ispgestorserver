@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use App\Models\Client;
 use App\Models\Plan;
 use App\Models\Audit;
+use App\Services\ClientSuspensionService;
 use App\Services\MikroTikQueueSyncService;
 use App\Services\MikroTikService;
 use App\Services\IspCapacityService;
@@ -567,64 +568,56 @@ class ClientController extends Controller
     }
 
     /**
-     * Cancelar cliente: Marca el estado como 'cancelled' (Eliminación lógica)
+     * Dar de baja a un cliente (baja lógica).
+     *
+     * Marca al cliente y sus planes como 'cancelled', libera sus colas en MikroTik
+     * y conserva todo el historial. A partir de la baja, el cliente queda excluido
+     * de todo proceso automatizado (facturación, suspensión, reactivación).
+     * Solo se permite sobre clientes previamente suspendidos.
      */
-    public function cancel(Request $request, $id)
+    public function cancel(Request $request, $id, ClientSuspensionService $suspension)
     {
-        Log::info("Iniciando proceso de cancelación para cliente ID: {$id}", ['user' => Auth::id()]);
-        
+        Log::info("Iniciando proceso de baja para cliente ID: {$id}", ['user' => Auth::id()]);
+
+        $request->validate([
+            'reason' => ['nullable', 'string', 'max:500'],
+        ]);
+
         try {
             $client = Client::findOrFail($id);
         } catch (\Exception $e) {
-             Log::error("Cliente no encontrado para cancelación: {$id}");
+             Log::error("Cliente no encontrado para baja: {$id}");
              return response()->json(['success' => false, 'message' => 'Cliente no encontrado'], 404);
         }
 
-        // Validación: Solo permitir eliminar si está suspendido
-        if (!in_array(strtoupper($client->service_status), ['SUSPENDIDO', 'SUSPENDED'])) {
-            Log::warning("Intento de cancelar cliente no suspendido: {$id} (Estado: {$client->service_status})");
+        $reason = $request->input('reason') ?: 'Baja administrativa';
+
+        try {
+            $result = $suspension->cancelClient($client, $reason, Auth::id(), $request->ip());
+        } catch (\Throwable $e) {
+            Log::error("Error dando de baja al cliente ID {$id}: " . $e->getMessage());
             return response()->json([
-                'success' => false, 
-                'message' => 'Solo se pueden eliminar clientes que estén suspendidos.'
+                'success' => false,
+                'message' => 'Error al dar de baja al cliente: ' . $e->getMessage(),
+            ], 500);
+        }
+
+        if (!($result['success'] ?? false)) {
+            Log::warning("Baja rechazada para cliente {$id}: " . ($result['message'] ?? 'motivo desconocido'));
+            return response()->json([
+                'success' => false,
+                'message' => $result['message'] ?? 'No se pudo dar de baja al cliente.',
             ], 400);
         }
 
-        DB::beginTransaction();
-        try {
-            $oldStatus = $client->service_status;
-            
-            $client->service_status = 'cancelled';
-            $client->save();
+        Log::info("Cliente ID {$id} dado de baja exitosamente.");
 
-            Audit::create([
-                'table_name' => 'clients',
-                'operation' => 'CANCEL_OP',
-                'record_id' => (string) $client->id,
-                'old_values' => ['service_status' => $oldStatus],
-                'new_values' => [
-                    'service_status' => 'cancelled',
-                    'timestamp' => now()->toIso8601String(),
-                    'executor' => Auth::user()->name ?? 'Unknown'
-                ],
-                'user_id' => Auth::id(),
-                'ip_address' => $request->ip(),
-            ]);
-
-            DB::commit();
-            Log::info("Cliente ID {$id} cancelado exitosamente.");
-
-            return response()->json([
-                'success' => true, 
-                'message' => 'Cliente eliminado/cancelado exitosamente'
-            ]);
-
-        } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error("Error cancelando cliente ID {$id}: " . $e->getMessage());
-            return response()->json([
-                'success' => false, 
-                'message' => 'Error al cancelar cliente: ' . $e->getMessage()
-            ], 500);
-        }
+        return response()->json([
+            'success' => true,
+            'message' => ($result['already_cancelled'] ?? false)
+                ? 'El cliente ya estaba dado de baja.'
+                : 'Cliente dado de baja exitosamente.',
+            'details' => $result['mikrotik'] ?? null,
+        ]);
     }
 }

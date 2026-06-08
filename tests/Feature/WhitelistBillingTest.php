@@ -67,18 +67,22 @@ function whitelistClient(Client $client): void
     ]);
 }
 
-describe('AutoBillingService::generateMonthlyInvoices() — lista blanca', function () {
+describe('AutoBillingService::generateMonthlyInvoices() — elegibilidad por estado', function () {
 
-    it('genera factura para un cliente en lista blanca cuyo plan está SUSPENDIDO', function () {
+    it('NO factura a un cliente SUSPENDIDO aunque esté en lista blanca (no consume)', function () {
         fakeInvoiceSettings();
 
+        // Caso defensivo: si por algún motivo un cliente en lista blanca quedó
+        // suspendido (servicio cortado), tampoco se le factura. La protección de
+        // la lista blanca se materializa reactivándolo, no facturando mientras
+        // está cortado.
         $client = makeClientWithPlan('SUSPENDED', 'suspended');
         whitelistClient($client);
 
         $invoices = app(AutoBillingService::class)->generateMonthlyInvoices();
 
-        expect($invoices)->toHaveCount(1);
-        expect(Invoice::where('client_id', $client->id)->count())->toBe(1);
+        expect($invoices)->toHaveCount(0);
+        expect(Invoice::where('client_id', $client->id)->count())->toBe(0);
     });
 
     it('NO genera factura para un cliente SUSPENDIDO que no está en lista blanca', function () {
@@ -143,5 +147,19 @@ describe('AutoBillingService::generateMonthlyInvoices() — lista blanca', funct
 
         expect($invoices)->toHaveCount(1);
         expect((float) $invoices[0]->amount)->toBe(30.00);
+    });
+
+    it('NO factura a un cliente dado de baja (CANCELLED) aunque tenga un plan activo', function () {
+        fakeInvoiceSettings();
+
+        // Guard a nivel de cliente: el servicio del cliente está dado de baja, así
+        // que aunque exista un plan en estado 'active' por inconsistencia de datos,
+        // no debe facturarse.
+        $client = makeClientWithPlan('CANCELLED', 'active');
+
+        $invoices = app(AutoBillingService::class)->generateMonthlyInvoices();
+
+        expect($invoices)->toHaveCount(0);
+        expect(Invoice::where('client_id', $client->id)->count())->toBe(0);
     });
 });
