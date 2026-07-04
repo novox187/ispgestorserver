@@ -28,6 +28,7 @@ use App\Http\Controllers\Admin\MikrotikRouterController;
 use App\Http\Controllers\FirewallController;
 use App\Http\Controllers\SettingController;
 use App\Http\Controllers\Admin\SettingController as AdminSettingController;
+use App\Http\Controllers\Admin\AuditController as AdminAuditController;
 use App\Http\Controllers\Admin\AutomationController as AdminAutomationController;
 use App\Http\Controllers\Admin\ClientWhitelistController as AdminClientWhitelistController;
 use App\Http\Controllers\Admin\NotificationSettingsController as AdminNotificationSettingsController;
@@ -139,6 +140,11 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
         Route::put('/routes', [AdminNotificationSettingsController::class, 'replaceRoutes'])->middleware('permission:configuracion.gestionar');
         Route::get('/logs', [AdminNotificationSettingsController::class, 'logs'])->middleware('permission:configuracion.ver');
     });
+
+    // Auditoría del sistema
+    Route::get('/audits', [AdminAuditController::class, 'index'])->middleware('permission:configuracion.ver');
+    Route::get('/audits/filters', [AdminAuditController::class, 'filters'])->middleware('permission:configuracion.ver');
+    Route::get('/clientes/{id}/audits', [AdminAuditController::class, 'clientHistory'])->whereNumber('id')->middleware('permission:clientes.ver');
 
     // Automatizaciones (workers, schedulers)
     Route::get('/automations', [AdminAutomationController::class, 'index'])->middleware('permission:configuracion.ver');
