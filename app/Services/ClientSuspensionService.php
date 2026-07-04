@@ -125,8 +125,15 @@ class ClientSuspensionService
             $client->service_status = 'suspended';
             $client->save();
 
-            ClientPlan::where('client_id', $client->id)
+            // Los mass updates no disparan eventos de Eloquent (el trait
+            // Auditable no los ve), así que capturamos los planes afectados
+            // para dejarlos trazados en el registro de auditoría.
+            $affectedPlanIds = ClientPlan::where('client_id', $client->id)
                 ->where('status', 'active')
+                ->pluck('id')
+                ->all();
+
+            ClientPlan::whereIn('id', $affectedPlanIds)
                 ->update(['status' => 'suspended']);
 
             Audit::create([
@@ -143,6 +150,7 @@ class ClientSuspensionService
                     'suspension_activated_at' => now()->toIso8601String(),
                     'mikrotik_list'    => 'morosos',
                     'mikrotik_result'  => $mkResult,
+                    'plans_affected'   => $affectedPlanIds,
                     'executor'         => 'system_auto',
                     'timestamp'        => now()->toIso8601String(),
                 ],
@@ -198,8 +206,12 @@ class ClientSuspensionService
             $client->service_status = 'cancelled';
             $client->save();
 
-            ClientPlan::where('client_id', $client->id)
+            $affectedPlanIds = ClientPlan::where('client_id', $client->id)
                 ->where('status', '!=', 'cancelled')
+                ->pluck('id')
+                ->all();
+
+            ClientPlan::whereIn('id', $affectedPlanIds)
                 ->update(['status' => 'cancelled', 'end_date' => now()]);
 
             Audit::create([
@@ -211,11 +223,13 @@ class ClientSuspensionService
                     'service_status'  => 'cancelled',
                     'reason'          => $reason,
                     'plans_cancelled' => true,
+                    'plans_affected'  => $affectedPlanIds,
                     'mikrotik_result' => $mkResults,
                     'executor'        => $employeeId ? "employee:{$employeeId}" : 'system',
                     'timestamp'       => now()->toIso8601String(),
                 ],
                 'user_id'    => $employeeId,
+                'user_type'  => $employeeId ? \App\Models\Employee::class : null,
                 'ip_address' => $ipAddress ?? '127.0.0.1',
             ]);
         });
@@ -295,8 +309,12 @@ class ClientSuspensionService
             $client->service_status = 'active';
             $client->save();
 
-            ClientPlan::where('client_id', $client->id)
+            $affectedPlanIds = ClientPlan::where('client_id', $client->id)
                 ->where('status', 'suspended')
+                ->pluck('id')
+                ->all();
+
+            ClientPlan::whereIn('id', $affectedPlanIds)
                 ->update(['status' => 'active']);
 
             Audit::create([
@@ -310,6 +328,7 @@ class ClientSuspensionService
                     'reason'          => $reason,
                     'mikrotik_list'   => 'morosos',
                     'mikrotik_result' => $mkResult,
+                    'plans_affected'  => $affectedPlanIds,
                     'executor'        => 'system_auto',
                     'timestamp'       => now()->toIso8601String(),
                 ],

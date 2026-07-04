@@ -69,10 +69,8 @@ class AutomationController extends Controller
             ->limit(50)
             ->get()
             ->map(function (Audit $a) {
-                $user = null;
-                if ($a->user_id && $a->user_type) {
-                    $user = $a->user_type::find($a->user_id);
-                }
+                // Resolución validada contra la lista blanca de clases del modelo
+                $user = $a->resolveUser();
                 return [
                     'id'          => $a->id,
                     'operation'   => $a->operation,

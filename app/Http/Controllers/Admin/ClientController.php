@@ -309,6 +309,7 @@ class ClientController extends Controller
                     'new_plan_name' => $newPlanName
                 ]),
                 'user_id' => Auth::id(),
+                'user_type' => Auth::user() ? get_class(Auth::user()) : null,
                 'ip_address' => $request->ip(),
             ]);
 
@@ -379,6 +380,7 @@ class ClientController extends Controller
             Log::info("Conexión Mikrotik OK.");
         } catch (\Exception $e) {
              Log::error("Error de conexión Mikrotik previo a suspensión: " . $e->getMessage());
+             $this->auditFailedServiceOperation('SUSPEND_FAILED_OP', $client, $request, 'mikrotik_connectivity', $e->getMessage());
              return response()->json(['success' => false, 'message' => 'Error de conectividad Mikrotik: ' . $e->getMessage()], 503);
         }
 
@@ -425,6 +427,7 @@ class ClientController extends Controller
                     'executor' => Auth::user()->name ?? 'Unknown'
                 ],
                 'user_id' => Auth::id(),
+                'user_type' => Auth::user() ? get_class(Auth::user()) : null,
                 'ip_address' => $request->ip(),
             ]);
 
@@ -447,9 +450,13 @@ class ClientController extends Controller
                 'client_ip' => $client->ip ?? 'N/A',
                 'user_id' => Auth::id()
             ]);
-            
+
+            // El rollback borra cualquier rastro del intento: registrar el
+            // fallo fuera de la transacción para que quede en auditoría.
+            $this->auditFailedServiceOperation('SUSPEND_FAILED_OP', $client, $request, 'execution', $e->getMessage());
+
             return response()->json([
-                'success' => false, 
+                'success' => false,
                 'message' => 'Error interno al suspender: ' . $e->getMessage(),
                 'debug_id' => $id
             ], 500);
@@ -491,6 +498,7 @@ class ClientController extends Controller
             Log::info("Conexión Mikrotik OK.");
         } catch (\Exception $e) {
              Log::error("Error de conexión Mikrotik previo a activación: " . $e->getMessage());
+             $this->auditFailedServiceOperation('ACTIVATE_FAILED_OP', $client, $request, 'mikrotik_connectivity', $e->getMessage());
              return response()->json(['success' => false, 'message' => 'Error de conectividad Mikrotik: ' . $e->getMessage()], 503);
         }
 
@@ -536,6 +544,7 @@ class ClientController extends Controller
                     'executor' => Auth::user()->name ?? 'Unknown'
                 ],
                 'user_id' => Auth::id(),
+                'user_type' => Auth::user() ? get_class(Auth::user()) : null,
                 'ip_address' => $request->ip(),
             ]);
 
@@ -558,9 +567,13 @@ class ClientController extends Controller
                 'client_ip' => $client->ip ?? 'N/A',
                 'user_id' => Auth::id()
             ]);
-            
+
+            // El rollback borra cualquier rastro del intento: registrar el
+            // fallo fuera de la transacción para que quede en auditoría.
+            $this->auditFailedServiceOperation('ACTIVATE_FAILED_OP', $client, $request, 'execution', $e->getMessage());
+
             return response()->json([
-                'success' => false, 
+                'success' => false,
                 'message' => 'Error interno al activar: ' . $e->getMessage(),
                 'debug_id' => $id
             ], 500);
@@ -619,5 +632,35 @@ class ClientController extends Controller
                 : 'Cliente dado de baja exitosamente.',
             'details' => $result['mikrotik'] ?? null,
         ]);
+    }
+
+    /**
+     * Registra en auditoría un intento fallido de operación de servicio
+     * (suspensión/activación). Se ejecuta fuera de la transacción principal
+     * y nunca lanza: un fallo aquí no debe alterar la respuesta al cliente.
+     */
+    private function auditFailedServiceOperation(string $operation, Client $client, Request $request, string $stage, string $error): void
+    {
+        try {
+            Audit::create([
+                'table_name' => 'clients',
+                'operation'  => $operation,
+                'record_id'  => (string) $client->id,
+                'old_values' => ['service_status' => $client->service_status],
+                'new_values' => [
+                    'service_status' => $client->service_status, // sin cambio: el intento falló
+                    'ip'             => $client->ip,
+                    'failed_stage'   => $stage,
+                    'error'          => $error,
+                    'timestamp'      => now()->toIso8601String(),
+                    'executor'       => Auth::user()->name ?? 'Unknown',
+                ],
+                'user_id'    => Auth::id(),
+                'user_type'  => Auth::user() ? get_class(Auth::user()) : null,
+                'ip_address' => $request->ip(),
+            ]);
+        } catch (\Throwable $e) {
+            Log::error("No se pudo auditar el intento fallido ({$operation}) del cliente {$client->id}: " . $e->getMessage());
+        }
     }
 }

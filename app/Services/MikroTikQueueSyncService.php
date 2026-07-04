@@ -36,6 +36,7 @@ class MikroTikQueueSyncService
                 'old_values' => $oldValues,
                 'new_values' => $newValues,
                 'user_id' => Auth::id(), // Might be null if run from CLI/Job
+                'user_type' => Auth::user() ? get_class(Auth::user()) : null,
                 'ip_address' => Request::ip() ?? '127.0.0.1',
             ]);
         } catch (Throwable $e) {
