@@ -41,6 +41,14 @@ class Client extends Authenticatable
 
     protected $appends = ['name', 'dni'];
 
+    /**
+     * Contexto transitorio (NO persistido) del próximo cambio de service_status:
+     * ['reason' => ..., 'executor' => ..., 'invoice_id' => ..., 'source' => ...].
+     * Lo consume ClientServiceStatusObserver para enriquecer el registro de
+     * interrupciones del servicio. Se limpia automáticamente tras cada save().
+     */
+    public ?array $serviceStatusChangeContext = null;
+
     public function getNameAttribute()
     {
         return $this->full_name;
@@ -90,6 +98,30 @@ class Client extends Authenticatable
     public function whitelistEntries(): HasMany
     {
         return $this->hasMany(ClientWhitelist::class);
+    }
+
+    /**
+     * Ventanas de corte del servicio (histórico + vigente).
+     */
+    public function serviceInterruptions(): HasMany
+    {
+        return $this->hasMany(ClientServiceInterruption::class);
+    }
+
+    /**
+     * Ventana de corte vigente (servicio actualmente cortado) o null.
+     */
+    public function openServiceInterruption(): ?ClientServiceInterruption
+    {
+        return $this->serviceInterruptions()->open()->latest('suspended_at')->first();
+    }
+
+    /**
+     * Fecha de corte vigente del servicio (límite de facturación) o null.
+     */
+    public function serviceCutSince(): ?\Illuminate\Support\Carbon
+    {
+        return $this->openServiceInterruption()?->suspended_at;
     }
 
     /**

@@ -407,6 +407,13 @@ class ClientController extends Controller
             Log::info("Mikrotik OK: IP agregada/verificada en lista morosos.");
 
             // 2. Actualizar estado en DB
+            // El observer abre la ventana de corte (fecha límite de facturación)
+            // con el ejecutor manual para trazabilidad.
+            $client->serviceStatusChangeContext = [
+                'reason'   => 'Suspensión manual desde el panel de administración',
+                'executor' => 'employee:' . (Auth::id() ?? '?') . ' (' . (Auth::user()->name ?? 'Unknown') . ')',
+                'source'   => 'manual',
+            ];
             $client->service_status = 'suspended';
             $client->save(); // Esto disparará el trait Auditable para el cambio de estado
             Log::info("Estado de cliente actualizado en DB a 'suspended'.");
@@ -524,8 +531,14 @@ class ClientController extends Controller
             Log::info("Mikrotik OK: IP removida de lista morosos.");
 
             // 2. Actualizar estado en DB
+            // El observer cierra la ventana de corte: la facturación se reanuda.
+            $client->serviceStatusChangeContext = [
+                'reason'   => 'Activación manual desde el panel de administración',
+                'executor' => 'employee:' . (Auth::id() ?? '?') . ' (' . (Auth::user()->name ?? 'Unknown') . ')',
+                'source'   => 'manual',
+            ];
             $client->service_status = 'active';
-            $client->save(); 
+            $client->save();
             Log::info("Estado de cliente actualizado en DB a 'active'.");
 
             // 3. Registro detallado de auditoría técnica

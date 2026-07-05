@@ -56,12 +56,29 @@ class AutoBillingService
         $clientsWithPlans = Client::query()
             ->whereNotIn('service_status', self::NON_BILLABLE_SERVICE_STATUSES)
             ->whereHas('clientPlans', fn ($p) => $p->where('status', 'active'))
-            ->with(['clientPlans.plan'])
+            ->with(['clientPlans.plan', 'serviceInterruptions'])
             ->get();
 
         $generatedInvoices = [];
 
         foreach ($clientsWithPlans as $client) {
+            // Validación por fecha límite de corte (defensa en profundidad):
+            // aunque el filtro por service_status ya excluye suspendidos y
+            // cancelados, si existe una ventana de corte que cubre la fecha de
+            // emisión (estado inconsistente o corte registrado por otra vía)
+            // NO se factura. La facturación se reanuda al cerrar la ventana.
+            if ($this->serviceWasCutOn($client, now())) {
+                Log::channel('billing')->warning('Generación mensual: cliente omitido por corte de servicio vigente en la fecha de emisión.', [
+                    'client_id'      => $client->id,
+                    'service_status' => $client->service_status,
+                    'cut_since'      => $client->serviceInterruptions
+                        ->whereNull('reactivated_at')
+                        ->max('suspended_at')
+                        ?->toIso8601String(),
+                ]);
+                continue;
+            }
+
             foreach ($client->clientPlans as $clientPlan) {
                 // Solo planes ACTIVOS: los suspendidos, cancelados o pendientes no
                 // se facturan en este ciclo.
@@ -217,6 +234,7 @@ class AutoBillingService
             ->with([
                 'clientPlans' => fn ($q) => $q->where('status', 'active'),
                 'clientPlans.plan',
+                'serviceInterruptions',
             ])
             ->orderBy('id')
             ->get();
@@ -243,6 +261,22 @@ class AutoBillingService
                 foreach ($cycles as [$cycleStart, $cycleEnd]) {
                     if ($clientPlanAborted) {
                         break;
+                    }
+
+                    // Fecha límite por corte: no se emiten facturas cuyo ciclo
+                    // inicia dentro de una ventana de suspensión/baja. Cubre
+                    // tanto cortes vigentes como ventanas históricas de clientes
+                    // ya reactivados (no se retro-factura el periodo cortado).
+                    if ($this->serviceWasCutOn($client, $cycleStart)) {
+                        $skipped[] = [
+                            'status'         => 'skipped',
+                            'reason'         => 'servicio suspendido/cortado en la fecha de inicio del ciclo',
+                            'client_id'      => $client->id,
+                            'client_plan_id' => $clientPlan->id,
+                            'cycle_start'    => $cycleStart->toDateString(),
+                            'cycle_end'      => $cycleEnd->toDateString(),
+                        ];
+                        continue;
                     }
 
                     try {
@@ -307,6 +341,21 @@ class AutoBillingService
         Log::channel('billing')->info('Generación por fecha de contrato — FIN', $report);
 
         return $report;
+    }
+
+    /**
+     * Determina si el servicio del cliente estaba cortado (suspendido o dado de
+     * baja) en la fecha dada, según las ventanas registradas en
+     * client_service_interruptions. Es la validación de "fecha límite": ninguna
+     * factura debe emitirse con fecha dentro de una ventana de corte.
+     *
+     * Requiere la relación serviceInterruptions cargada (eager) para evitar N+1.
+     */
+    private function serviceWasCutOn(Client $client, Carbon $date): bool
+    {
+        return $client->serviceInterruptions->contains(
+            fn ($interruption) => $interruption->covers($date)
+        );
     }
 
     /**

@@ -122,6 +122,14 @@ class ClientSuspensionService
         DB::transaction(function () use ($client, $reason, $invoiceId, $mkResult, $invoiceTrace) {
             $oldStatus = $client->service_status;
 
+            // El observer abre la ventana de corte con este contexto (fecha de
+            // suspensión que la facturación usará como límite de emisión).
+            $client->serviceStatusChangeContext = [
+                'reason'     => $reason,
+                'executor'   => 'system_auto',
+                'invoice_id' => $invoiceId,
+                'source'     => 'auto',
+            ];
             $client->service_status = 'suspended';
             $client->save();
 
@@ -203,6 +211,12 @@ class ClientSuspensionService
         DB::transaction(function () use ($client, $reason, $employeeId, $ipAddress, $mkResults) {
             $oldStatus = $client->service_status;
 
+            // El observer mantiene/abre la ventana de corte como 'cancellation'.
+            $client->serviceStatusChangeContext = [
+                'reason'   => $reason,
+                'executor' => $employeeId ? "employee:{$employeeId}" : 'system',
+                'source'   => $employeeId ? 'manual' : 'auto',
+            ];
             $client->service_status = 'cancelled';
             $client->save();
 
@@ -306,6 +320,13 @@ class ClientSuspensionService
         DB::transaction(function () use ($client, $reason, $mkResult) {
             $oldStatus = $client->service_status;
 
+            // El observer cierra la ventana de corte con la fecha de
+            // reactivación: desde aquí la facturación se reanuda.
+            $client->serviceStatusChangeContext = [
+                'reason'   => $reason,
+                'executor' => 'system_auto',
+                'source'   => 'auto',
+            ];
             $client->service_status = 'active';
             $client->save();
 
