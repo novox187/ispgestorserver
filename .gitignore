@@ -1,6 +1,7 @@
 *.log
 .DS_Store
 .env
+.playwright-mcp/
 .env.backup
 .env.production
 .phpactor.json
