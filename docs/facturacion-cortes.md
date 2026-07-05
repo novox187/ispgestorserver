@@ -89,6 +89,34 @@ La protección anti-duplicados existente no cambió: verificación por mes/plan 
 la generación mensual y `lockForUpdate` + verificación por rango de ciclo (con
 soft-deleted incluidas) en la generación por contrato.
 
+## Conciliación de integridad (worker `billing_integrity`)
+
+`App\Services\BillingIntegrityService` verifica —en **solo lectura**— los
+invariantes del módulo y reporta lo que encuentre sin corregir nada:
+
+1. Cliente con estado facturable pero ventana de corte abierta.
+2. Cliente suspendido/cancelado sin ventana abierta (típico de un mass-update
+   o edición directa en BD que esquivó el observer).
+3. Facturas no anuladas emitidas dentro de una ventana de corte (misma regla
+   de día que `AutoBillingService`).
+4. Cliente cortado que conserva planes `active`.
+5. *(best-effort)* Desalineación con la lista `morosos` de MikroTik en ambas
+   direcciones: suspendidos que siguen navegando y activos que siguen
+   bloqueados. Si el router no responde, el chequeo se omite y queda anotado.
+
+Puntos de entrada:
+
+- **Worker automático** `App\Jobs\ReconcileBillingIntegrity`, gestionado desde
+  Workers Automáticos (key `billing_integrity`, diario 03:00 por defecto,
+  parámetro `check_mikrotik`). Notifica el resumen vía `NotifiesWorkerSummary`.
+- **Comando manual** `php artisan billing:check-integrity [--skip-mikrotik]` —
+  útil tras un deploy o una corrección de datos; devuelve exit code ≠ 0 si hay
+  hallazgos.
+
+Cuando hay inconsistencias, el detalle queda en el log `billing` y en la
+auditoría (operación `BILLING_INTEGRITY_OP`), además del resumen notificado.
+Pruebas en `tests/Feature/BillingIntegrityTest.php`.
+
 ## Verificación
 
 Pruebas en `tests/Feature/SuspendedClientBillingTest.php` (Pest):
@@ -133,3 +161,12 @@ app(AutoBillingService::class)->generateMonthlyInvoices(); // no debe incluirlo 
 - `app/Services/ClientSuspensionService.php` — contexto de negocio en suspensión/baja/reactivación
 - `app/Http/Controllers/Admin/ClientController.php` — contexto en suspensión/activación manual
 - `tests/Feature/SuspendedClientBillingTest.php` (nuevo)
+
+Conciliación de integridad:
+
+- `app/Services/BillingIntegrityService.php` (nuevo)
+- `app/Jobs/ReconcileBillingIntegrity.php` (nuevo)
+- `app/Console/Commands/CheckBillingIntegrity.php` (nuevo)
+- `app/Services/MikroTikService.php` — método `getAddressListEntries()`
+- `database/migrations/2026_07_05_000001_seed_billing_integrity_automation.php` (nuevo)
+- `tests/Feature/BillingIntegrityTest.php` (nuevo)

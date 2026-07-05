@@ -513,6 +513,42 @@ public function getClientQueues(string $clientIp): array
         }
     }
 
+    /**
+     * Lee todas las entradas de una address-list (p. ej. 'morosos').
+     * Usado por la conciliación de integridad para comparar el estado real del
+     * router contra la base de datos.
+     *
+     * @return array{success: bool, entries?: array<int, array{address: string, comment: string}>, message?: string}
+     */
+    public function getAddressListEntries(string $listName): array
+    {
+        if (!$this->client) {
+            return ['success' => false, 'message' => 'Cliente MikroTik no inicializado'];
+        }
+
+        try {
+            $print = new Query('/ip/firewall/address-list/print');
+            $print->where('list', $listName);
+            $rows = $this->client->query($print)->read();
+
+            $entries = [];
+            foreach ($rows as $row) {
+                if (!isset($row['address'])) {
+                    continue;
+                }
+                $entries[] = [
+                    'address' => $row['address'],
+                    'comment' => $row['comment'] ?? '',
+                ];
+            }
+
+            return ['success' => true, 'entries' => $entries];
+        } catch (Exception $e) {
+            Log::error('MikroTik Get Address List Error: ' . $e->getMessage());
+            return ['success' => false, 'message' => $e->getMessage()];
+        }
+    }
+
     private function parseBandwidth(string $bandwidth): array
 {
     // Convierte "10M/5M" a [upload, download] en bits/segundo
