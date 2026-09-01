@@ -1,0 +1,12 @@
+# Dependencias del agente de aprovisionamiento.
+#
+# La lista es deliberadamente corta: este agente se instala en máquinas ajenas
+# (la oficina del ISP y el propio hosting), así que cada dependencia añadida es
+# una superficie de mantenimiento que alguien tendrá que sostener.
+#
+# El cliente HTTP y la firma HMAC usan solo la biblioteca estándar; el rol
+# vpn_host no necesita nada más allá de `wg`, que viene con wireguard-tools.
+
+# Cliente de la API binaria de RouterOS. Puro Python, sin extensiones nativas.
+# Solo lo necesita el rol `provisioner`.
+librouteros==3.4.1

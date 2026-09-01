@@ -32,6 +32,11 @@ use App\Http\Controllers\Admin\AuditController as AdminAuditController;
 use App\Http\Controllers\Admin\AutomationController as AdminAutomationController;
 use App\Http\Controllers\Admin\ClientWhitelistController as AdminClientWhitelistController;
 use App\Http\Controllers\Admin\NotificationSettingsController as AdminNotificationSettingsController;
+use App\Http\Controllers\Admin\DeviceProvisioningController as AdminDeviceProvisioningController;
+use App\Http\Controllers\Admin\ProvisioningAgentController as AdminProvisioningAgentController;
+use App\Http\Controllers\Agent\AgentEnrollmentController;
+use App\Http\Controllers\Agent\AgentTaskController;
+use App\Http\Controllers\Agent\DeviceDetectionController;
 
 // ── Broadcasting Auth (Reverb / Pusher) ──────────────────────────────────────
 // Acepta tokens de cliente Y de empleado a través de auth:sanctum
@@ -101,6 +106,34 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
     Route::post('/mikrotik-routers', [MikrotikRouterController::class, 'store'])->middleware('super_admin');
     Route::put('/mikrotik-routers/{id}', [MikrotikRouterController::class, 'update'])->middleware('super_admin');
     Route::delete('/mikrotik-routers/{id}', [MikrotikRouterController::class, 'destroy'])->middleware('super_admin');
+
+    // ── Aprovisionamiento automático de dispositivos ─────────────────────────
+    // Lectura para cualquier empleado con visibilidad de MikroTik; toda acción
+    // que toque la infraestructura de red exige super_admin.
+    Route::prefix('provisioning')->group(function () {
+        Route::get('/sessions', [AdminDeviceProvisioningController::class, 'index'])
+            ->middleware('permission:mikrotik.ver');
+        Route::get('/sessions/{id}', [AdminDeviceProvisioningController::class, 'show'])
+            ->middleware('permission:mikrotik.ver');
+        Route::post('/sessions/{id}/approve', [AdminDeviceProvisioningController::class, 'approve'])
+            ->middleware('super_admin');
+        Route::post('/sessions/{id}/cancel', [AdminDeviceProvisioningController::class, 'cancel'])
+            ->middleware('super_admin');
+        Route::post('/sessions/{id}/rollback', [AdminDeviceProvisioningController::class, 'rollback'])
+            ->middleware('super_admin');
+
+        // Registrar un agente es entregarle acceso a la infraestructura de red.
+        Route::get('/agents', [AdminProvisioningAgentController::class, 'index'])
+            ->middleware('permission:mikrotik.ver');
+        Route::post('/agents', [AdminProvisioningAgentController::class, 'store'])
+            ->middleware('super_admin');
+        Route::post('/agents/{id}/regenerate-token', [AdminProvisioningAgentController::class, 'regenerateToken'])
+            ->middleware('super_admin');
+        Route::put('/agents/{id}', [AdminProvisioningAgentController::class, 'update'])
+            ->middleware('super_admin');
+        Route::delete('/agents/{id}', [AdminProvisioningAgentController::class, 'destroy'])
+            ->middleware('super_admin');
+    });
 
     // ISPs
     Route::get('/isps', [InternetServiceProviderController::class, 'index']);
@@ -189,6 +222,32 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
         Route::post('/{ticketId}/messages', [AdminChatController::class, 'store'])->middleware('permission:soporte.gestionar');
         Route::put('/{ticketId}/assign', [AdminChatController::class, 'assign'])->middleware('permission:soporte.gestionar');
         Route::put('/{ticketId}/status', [AdminChatController::class, 'updateStatus'])->middleware('permission:soporte.gestionar');
+    });
+});
+
+// ── Canal de agentes de aprovisionamiento (máquina a máquina) ────────────────
+//
+// La aplicación vive aislada en su contenedor de Coolify y no puede alcanzar ni
+// la NIC donde se enchufa un router ni el WireGuard del sistema operativo del
+// hosting. En lugar de intentar salir del contenedor se invierte la dirección:
+// los agentes entran a buscar trabajo por HTTPS. Nadie abre un puerto y el NAT
+// de la oficina deja de importar.
+//
+// No usan Sanctum: sus tokens están atados a un usuario y no caducan. Cada
+// petición va firmada con HMAC-SHA256 y protegida contra repetición
+// (ver AuthenticateProvisioningAgent).
+Route::prefix('agent')->group(function () {
+    // El canje del token de enrolamiento no puede ir firmado — el secreto con
+    // el que se firmaría es justo lo que entrega. Lo protegen un token de un
+    // solo uso con caducidad corta y un límite de peticiones estricto.
+    Route::post('/enroll', [AgentEnrollmentController::class, 'enroll'])
+        ->middleware('throttle:10,1');
+
+    Route::middleware(['agent.hmac', 'throttle:180,1'])->group(function () {
+        Route::post('/heartbeat',        [AgentTaskController::class, 'heartbeat']);
+        Route::post('/devices/detected', [DeviceDetectionController::class, 'store']);
+        Route::post('/tasks/claim',      [AgentTaskController::class, 'claim']);
+        Route::post('/tasks/{id}/report', [AgentTaskController::class, 'report']);
     });
 });
 

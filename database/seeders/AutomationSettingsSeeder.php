@@ -174,6 +174,102 @@ class AutomationSettingsSeeder extends Seeder
                     ],
                 ],
             ],
+
+            /*
+             * Aprovisionamiento automático de dispositivos.
+             *
+             * No tiene `job_class` con planificación propia: el flujo lo
+             * disparan los agentes al detectar un equipo, no el scheduler. La
+             * fila existe para que sus parámetros operativos sean editables
+             * desde el panel sin redesplegar en Coolify — que fue el criterio
+             * que ya siguieron los módulos de MikroTik y notificaciones.
+             */
+            [
+                'key'         => 'device_auto_provisioning',
+                'name'        => 'Alta Automática de Dispositivos',
+                'description' => 'Gobierna el flujo que detecta un router conectado por cable, le monta un túnel WireGuard en ambos extremos, verifica el enlace y lo registra. Desactivarlo detiene las altas nuevas sin revocar credenciales de los agentes.',
+                'job_class'   => \App\Jobs\ExpireStaleProvisioningTasks::class,
+                'queue'       => 'provisioning',
+                'enabled'     => true,
+                // El vigilante de tareas vencidas sí corre en bucle: es lo que
+                // rescata una sesión cuyo agente murió a mitad de aplicar.
+                'schedule_type'   => 'every_five_minutes',
+                'schedule_config' => [],
+                'params'          => [
+                    'auto_approve'         => true,
+                    'vpn_subnet'           => '10.77.0.0/24',
+                    'vpn_server_ip'        => '10.77.0.1',
+                    'endpoint_host'        => '',
+                    'endpoint_port'        => 51820,
+                    'keepalive'            => 25,
+                ],
+                'params_schema'   => [
+                    'auto_approve' => [
+                        'type'        => 'boolean',
+                        'label'       => 'Aprobar altas automáticamente',
+                        'description' => 'Con esto activo, un equipo compatible se da de alta sin intervención. Desactívalo para que cada alta espere aprobación manual en el panel antes de tocar el router.',
+                        'required'    => true,
+                    ],
+                    'vpn_subnet' => [
+                        'type'        => 'string',
+                        'label'       => 'Subred de la VPN (CIDR)',
+                        'description' => 'Rango del que se reparten las direcciones de gestión de los routers. Ej: 10.77.0.0/24. Cambiarlo no reconfigura los equipos ya dados de alta.',
+                        'required'    => true,
+                    ],
+                    'vpn_server_ip' => [
+                        'type'        => 'string',
+                        'label'       => 'IP del servidor en la VPN',
+                        'description' => 'Dirección del extremo del hosting dentro de la subred. Es la que los routers hacen ping para verificar el túnel.',
+                        'required'    => true,
+                    ],
+                    'endpoint_host' => [
+                        'type'        => 'string',
+                        'label'       => 'Host público del servidor VPN',
+                        'description' => 'Dominio o IP a la que marcan los routers. Déjalo vacío para usar el que publique el propio agente del hosting; rellénalo solo si el host ve una IP privada y los equipos deben marcar a otro nombre.',
+                        'required'    => false,
+                    ],
+                    'endpoint_port' => [
+                        'type'        => 'integer',
+                        'label'       => 'Puerto del servidor VPN',
+                        'description' => 'Puerto UDP en el que escucha WireGuard en el hosting.',
+                        'min'         => 1,
+                        'max'         => 65535,
+                        'required'    => true,
+                    ],
+                    'keepalive' => [
+                        'type'        => 'integer',
+                        'label'       => 'Keepalive (segundos)',
+                        'description' => 'Cada cuánto envía tráfico el router para mantener abierto el mapeo NAT de su oficina. Sin esto, el hosting deja de poder iniciar conexiones hacia el equipo.',
+                        'min'         => 0,
+                        'max'         => 300,
+                        'required'    => true,
+                    ],
+                ],
+            ],
+
+            [
+                'key'         => 'provisioning_agent_monitor',
+                'name'        => 'Monitor de Agentes de Aprovisionamiento',
+                'description' => 'Vigila que los agentes sigan reportando. Un agente caído no rompe nada de forma visible: simplemente deja de haber altas, y por eso hay que detectarlo activamente.',
+                'job_class'   => \App\Jobs\MonitorProvisioningAgentsJob::class,
+                'queue'       => 'default',
+                'enabled'     => true,
+                'schedule_type'   => 'every_five_minutes',
+                'schedule_config' => [],
+                'params'          => [
+                    'offline_after_minutes' => 5,
+                ],
+                'params_schema'   => [
+                    'offline_after_minutes' => [
+                        'type'        => 'integer',
+                        'label'       => 'Minutos sin reportar para alertar',
+                        'description' => 'Tiempo sin latido tras el cual se considera caído a un agente. Debe ser holgadamente mayor que su intervalo de sondeo.',
+                        'min'         => 1,
+                        'max'         => 120,
+                        'required'    => true,
+                    ],
+                ],
+            ],
         ];
 
         foreach ($automations as $automation) {

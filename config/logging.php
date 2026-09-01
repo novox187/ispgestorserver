@@ -73,6 +73,22 @@ return [
             'replace_placeholders' => true,
         ],
 
+        /*
+         * Traza del aprovisionamiento automático de dispositivos: detección
+         * física, pasos de la saga y las líneas que los agentes remotos
+         * adjuntan a cada reporte. Va en su propio canal porque el diagnóstico
+         * de un alta fallida es cronológico y se perdería entre el ruido del
+         * log general. Retención larga: un túnel mal montado puede tardar días
+         * en manifestarse.
+         */
+        'provisioning' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/provisioning.log'),
+            'level' => env('LOG_LEVEL', 'debug'),
+            'days' => env('LOG_PROVISIONING_DAYS', 30),
+            'replace_placeholders' => true,
+        ],
+
         'slack' => [
             'driver' => 'slack',
             'url' => env('LOG_SLACK_WEBHOOK_URL'),

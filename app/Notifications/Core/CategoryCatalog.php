@@ -41,6 +41,15 @@ class CategoryCatalog
                 ],
             ],
             [
+                'group'       => 'provisioning',
+                'group_label' => 'Alta de dispositivos',
+                'items'       => [
+                    self::item(NotificationCategory::DEVICE_PROVISIONED, 'Dispositivo dado de alta', 'Aviso informativo cuando un router conectado por cable queda enlazado por VPN y verificado.'),
+                    self::item(NotificationCategory::DEVICE_PROVISION_FAILED, 'Alta fallida', 'Alerta crítica cuando un alta falla, con el detalle de si la reversión dejó residuo que exija limpieza manual.'),
+                    self::item(NotificationCategory::PROVISIONING_AGENT_OFFLINE, 'Agente sin conexión', 'Alerta crítica cuando un agente de aprovisionamiento deja de reportar: mientras dure, no se puede dar de alta ningún equipo.'),
+                ],
+            ],
+            [
                 'group'       => 'workers',
                 'group_label' => 'Workers automáticos',
                 'items'       => [

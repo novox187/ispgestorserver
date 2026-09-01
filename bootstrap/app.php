@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\AuthenticateProvisioningAgent;
 use App\Http\Middleware\EnsureEmployeeSuperAdmin;
 use App\Http\Middleware\EnsurePrimaryRouter;
 use App\Http\Middleware\CheckPermission;
@@ -25,6 +26,9 @@ return Application::configure(basePath: dirname(__DIR__))
             'super_admin'      => EnsureEmployeeSuperAdmin::class,
             'permission'       => CheckPermission::class,
             'primary_router'   => EnsurePrimaryRouter::class,
+            // Canal máquina-a-máquina de los agentes de aprovisionamiento.
+            // No usa Sanctum: sus tokens están atados a un usuario y no caducan.
+            'agent.hmac'       => AuthenticateProvisioningAgent::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

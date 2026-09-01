@@ -17,6 +17,33 @@ trait Auditable
     protected static array $auditExcludedFields = ['updated_at', 'created_at'];
 
     /**
+     * Exclusiones ADICIONALES propias de cada modelo.
+     *
+     * Existe como método y no como propiedad porque PHP prohíbe redeclarar en
+     * la clase una propiedad del trait con un valor distinto (error fatal de
+     * composición). Los modelos que reciben escrituras de alta frecuencia en
+     * campos sin valor de negocio —p. ej. los de salud que el monitor de
+     * conectividad reescribe cada 5 minutos— la sobrescriben para no ahogar el
+     * historial con ruido.
+     *
+     * @return list<string>
+     */
+    protected static function auditIgnoredFields(): array
+    {
+        return [];
+    }
+
+    /**
+     * Lista efectiva de campos a ignorar: los comunes más los del modelo.
+     *
+     * @return list<string>
+     */
+    protected static function resolvedAuditExcludedFields(): array
+    {
+        return array_merge(static::$auditExcludedFields, static::auditIgnoredFields());
+    }
+
+    /**
      * Boot the trait.
      */
     public static function bootAuditable()
@@ -48,7 +75,7 @@ trait Auditable
             // Obtener cambios excluyendo timestamps automáticos (ruido)
             $changes = array_diff_key(
                 $model->getChanges(),
-                array_flip(static::$auditExcludedFields)
+                array_flip(static::resolvedAuditExcludedFields())
             );
 
             // Touch puro (solo updated_at): sin valor de auditoría, no registrar

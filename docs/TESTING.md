@@ -2,14 +2,23 @@
 
 ## Resumen
 
-- Framework: **Pest** sobre PHPUnit (Laravel 11).
+- Framework: **Pest** sobre PHPUnit (Laravel 12).
 - Suites declaradas en `phpunit.xml`: `Unit` y `Feature`.
-- Base de datos de prueba: MySQL (heredada de `.env`, ver nota más abajo).
-- Resultado actual: **138 tests pasando, 409 aserciones, ~41 segundos**.
+- Base de datos de prueba: MySQL (ver nota más abajo).
+- Resultado actual: **330 tests pasando, 1093 aserciones, ~80 segundos**.
 
 ```bash
-php artisan test
+DB_CONNECTION=mysql DB_DATABASE=ispgestor_test php artisan test
 ```
+
+> **`phpunit.xml` miente sobre la base de datos.** Declara `sqlite`/`:memory:`,
+> pero esta máquina no tiene `pdo_sqlite`, así que la suite se corre contra
+> MySQL con el override de arriba. Sin él, `php artisan test` a secas falla.
+
+> **Ruido de PHP 8.5.** Todos los tests aparecen marcados como `DEPR` por
+> `PDO::MYSQL_ATTR_SSL_CA`, que se emite desde
+> `vendor/laravel/framework/config/database.php:64`. Es ajeno al proyecto y no
+> indica ningún fallo: lo que importa es que no haya líneas `FAIL`.
 
 ## Configuración crítica para que la suite sea estable
 
@@ -67,6 +76,10 @@ php artisan test
 
 - **`makeSuperAdminEmployee(array $attributes = []): Employee`** — `firstOrCreate` el `Role` con slug `super_admin` y crea un `Employee` con ese `role_id`. El middleware `CheckPermission` hace short-circuit si el empleado tiene el rol `super_admin`, eliminando la necesidad de poblar permisos uno a uno en cada test.
 - **`seedValidInvoiceConfig(): void`** — inserta exactamente las 12 claves que `InvoiceConfigValidator::REQUIRED` exige, con valores válidos. Reutilizable por cualquier test que dispare un endpoint de facturación.
+- **`makeProvisioningAgent(role, capabilities, attributes): array`** — crea un agente de aprovisionamiento ya enrolado y devuelve `['agent', 'token', 'secret']`. Las credenciales en claro solo existen aquí: son necesarias para poder firmar peticiones desde un test.
+- **`signedAgentHeaders(enrolled, method, uri, body, overrides): array`** — cabeceras HMAC válidas. `overrides` permite romper una a propósito (`secret`, `nonce`, `timestamp`, `token`, `signature`) para ejercitar los rechazos del middleware.
+- **`driveProvisioningFlow(test, provisioner, vpnHost, failAt, maxSteps): array`** — conduce un alta completa simulando a los dos agentes por HTTP contra los endpoints reales. Devuelve los tipos de tarea ejecutados en orden. `failAt` mapea tipo de tarea → fallo, para ejercitar la compensación.
+- **`fakeAgentTaskResult(type, overrides): array`** — resultado plausible de cada tipo de tarea.
 
 ## Aislamiento entre tests
 
@@ -80,4 +93,5 @@ Los mocks de `MikroTikQueueSyncService` se registran con `app()->instance(...)` 
 2. Si tu test toca facturación y no quieres ejercitar la validación de configuración, llama a `seedValidInvoiceConfig()` antes.
 3. Si tu test toca creación/edición de clientes con cambio de plan y no quieres ejercitar la validación de capacidad ISP, usa el patrón `seedAmpleIspCapacity()` de `ClientMikroTikSyncHttpTest.php` o adapta uno similar.
 4. **Nunca** dejes que un test dependa del router MikroTik real. Mockea siempre `MikroTikQueueSyncService` con `app()->instance(MikroTikQueueSyncService::class, $mock)`.
-5. Antes de pushear, corre `php artisan test` y verifica que sigan 138+ pasando.
+5. Si tu test toca el alta automática de dispositivos, usa `makeProvisioningAgent()` + `driveProvisioningFlow()` y mockea `MikrotikHealthChecker` — es lo único del flujo que exige un router real al otro lado.
+6. Antes de pushear, corre `DB_CONNECTION=mysql DB_DATABASE=ispgestor_test php artisan test` y verifica que sigan 330+ pasando.
