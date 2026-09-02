@@ -46,6 +46,10 @@ fi
 
 echo "==> Instalando en ${PREFIX}"
 mkdir -p "${PREFIX}"
+# Se borra antes de copiar: `cp -r` fusiona sobre lo que ya hay, así que al
+# reinstalar una versión con menos ficheros los sobrantes de la anterior
+# seguirían ahí y se importarían.
+rm -rf "${PREFIX}/ispgestor_agent"
 cp -r "${SOURCE_DIR}/ispgestor_agent" "${PREFIX}/"
 cp "${SOURCE_DIR}/requirements.txt" "${PREFIX}/"
 
@@ -64,9 +68,14 @@ cp "${SOURCE_DIR}/ispgestor-agent.service" "${SERVICE}"
 systemctl daemon-reload
 
 echo "==> Atajo en /usr/local/bin/ispgestor-agent"
+# PYTHONPATH explícito y no un `cd`: sin él, `python -m` solo encuentra el
+# módulo cuando el directorio de trabajo es justo ${PREFIX}. El servicio no lo
+# notaba porque su unidad fija WorkingDirectory, pero cualquier uso del CLI
+# desde otro sitio —enrolar, selftest— moría con "No module named
+# ispgestor_agent", y el instalador desatendido corre desde donde sea.
 cat > /usr/local/bin/ispgestor-agent <<EOF
 #!/usr/bin/env bash
-exec ${PREFIX}/venv/bin/python -m ispgestor_agent "\$@"
+exec env PYTHONPATH="${PREFIX}" ${PREFIX}/venv/bin/python -m ispgestor_agent "\$@"
 EOF
 chmod 755 /usr/local/bin/ispgestor-agent
 
