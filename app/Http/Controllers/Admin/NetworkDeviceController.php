@@ -169,8 +169,9 @@ class NetworkDeviceController extends Controller
         return response()->json([
             'error' => [
                 'code'    => 'MIKROTIK_MANAGED_ELSEWHERE',
-                'message' => 'Los routers MikroTik se gestionan desde su propio módulo, '
-                    . 'que además decide cuál es el router primary.',
+                'message' => 'Los routers MikroTik se escriben por `/api/mikrotik-routers`, '
+                    . 'que es donde vive su plano de control: credenciales, router '
+                    . 'primary, CIDR de clientes y gateway.',
             ],
         ], 422);
     }

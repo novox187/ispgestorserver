@@ -93,6 +93,11 @@ class MikrotikRouterController extends Controller
             // Ej: 192.168.20.0/24 — sirve para inferir la subred a partir del gateway.
             'network_cidr' => ['nullable', 'string', 'max:45', 'regex:/^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/'],
             'gateway'      => ['nullable', 'ip', 'max:45'],
+            // Ubicación para el mapa. Estaban en `$fillable` desde que se fundió
+            // el inventario, pero sin regla aquí `validate()` las descartaba en
+            // silencio: un router nunca podía salir del apartado «sin ubicar».
+            'latitude'     => ['nullable', 'numeric', 'between:-90,90'],
+            'longitude'    => ['nullable', 'numeric', 'between:-180,180'],
         ];
     }
 
@@ -109,6 +114,8 @@ class MikrotikRouterController extends Controller
             'is_primary'           => $router->is_primary,
             'network_cidr'         => $router->network_cidr,
             'gateway'              => $router->gateway,
+            'latitude'             => $router->latitude,
+            'longitude'            => $router->longitude,
             'connectivity_status'  => $router->connectivity_status,
             'last_health_check_at' => $router->last_health_check_at ? (int) ($router->last_health_check_at->timestamp * 1000) : null,
             'last_connected_at'    => $router->last_connected_at    ? (int) ($router->last_connected_at->timestamp    * 1000) : null,

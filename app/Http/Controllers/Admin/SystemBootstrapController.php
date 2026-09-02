@@ -34,7 +34,7 @@ class SystemBootstrapController extends Controller
             'routers_total' => MikrotikRouter::count(),
             'cta'           => [
                 'message'     => 'Configure el router principal para habilitar todas las funcionalidades.',
-                'redirect_to' => '/mikrotik/dispositivos',
+                'redirect_to' => '/red/dispositivos',
                 'label'       => 'Configurar router principal',
             ],
         ]);

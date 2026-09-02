@@ -16,7 +16,7 @@ it('endpoint /admin/system-bootstrap reporta primary_router_configured=false sin
     $res->assertOk()
         ->assertJsonPath('primary_router_configured', false)
         ->assertJsonPath('routers_total', 0)
-        ->assertJsonPath('cta.redirect_to', '/mikrotik/dispositivos');
+        ->assertJsonPath('cta.redirect_to', '/red/dispositivos');
 });
 
 it('endpoint /admin/system-bootstrap reporta el primary cuando existe', function () {
@@ -39,7 +39,7 @@ it('middleware primary_router devuelve 423 sin router configurado', function () 
     $res = $this->getJson('/api/mikrotik/system');
     $res->assertStatus(423)
         ->assertJsonPath('code', 'no_primary_router')
-        ->assertJsonPath('redirect_to', '/mikrotik/dispositivos');
+        ->assertJsonPath('redirect_to', '/red/dispositivos');
 });
 
 it('middleware primary_router deja pasar cuando hay router configurado', function () {

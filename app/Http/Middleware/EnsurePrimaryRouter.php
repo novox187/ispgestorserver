@@ -29,7 +29,7 @@ class EnsurePrimaryRouter
                 'message'              => 'No hay un router MikroTik principal configurado. '
                                           . 'Registre el primer dispositivo antes de usar esta funcionalidad.',
                 'code'                 => 'no_primary_router',
-                'redirect_to'          => '/mikrotik/dispositivos',
+                'redirect_to'          => '/red/dispositivos',
                 'cta_label'            => 'Configurar router principal',
             ], 423);
         }
