@@ -8,6 +8,7 @@ use App\Models\ProvisioningAgent;
 use App\Services\Provisioning\ProvisioningAuditor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Validation\Rule;
 
 /**
@@ -62,6 +63,7 @@ class ProvisioningAgentController extends Controller
                 'enrollment_token'   => $token,
                 'enrollment_expires' => $agent->enrollment_expires_at?->toIso8601String(),
                 'enroll_command'     => $this->enrollCommand($token),
+                'installer_command'  => $this->installerCommand($agent),
             ]),
         ], 201);
     }
@@ -85,6 +87,7 @@ class ProvisioningAgentController extends Controller
                 'enrollment_token'   => $token,
                 'enrollment_expires' => $agent->enrollment_expires_at?->toIso8601String(),
                 'enroll_command'     => $this->enrollCommand($token),
+                'installer_command'  => $this->installerCommand($agent),
             ]),
         ]);
     }
@@ -145,5 +148,27 @@ class ProvisioningAgentController extends Controller
         $url = rtrim((string) config('app.url'), '/');
 
         return "ispgestor-agent enroll --url {$url} --token {$token}";
+    }
+
+    /**
+     * Orden única que instala, enrola y arranca el agente en la máquina destino.
+     *
+     * Es el camino recomendado: el manual exige llevar la carpeta del agente a
+     * mano, ejecutar `install.sh`, averiguar qué NIC vigilar y pegar el token,
+     * y cada uno de esos pasos es una ocasión de equivocarse.
+     *
+     * La URL va firmada y caduca igual que el token. No se le adjunta el token
+     * en claro: quien la descarga recibe uno recién emitido, así el secreto no
+     * pasa por la barra de direcciones ni por los registros de ningún proxy.
+     */
+    private function installerCommand(ProvisioningAgent $agent): string
+    {
+        $url = URL::temporarySignedRoute(
+            'agent.installer',
+            now()->addMinutes(ProvisioningAgent::ENROLLMENT_TTL_MINUTES),
+            ['id' => $agent->id]
+        );
+
+        return "curl -fsSL \"{$url}\" | sudo bash";
     }
 }

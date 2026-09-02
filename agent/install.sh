@@ -28,6 +28,22 @@ fi
 
 command -v python3 >/dev/null || { echo "Falta python3." >&2; exit 1; }
 
+# `import venv` puede funcionar y aun así fallar la creación del entorno: en
+# Debian y Ubuntu `ensurepip` viaja en un paquete aparte, y sin él `python3 -m
+# venv` aborta con un mensaje que no dice qué instalar.
+if ! python3 -c 'import ensurepip' >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null; then
+        PYVER="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+        echo "==> Instalando python${PYVER}-venv (falta ensurepip)"
+        DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "python${PYVER}-venv" \
+            || { echo "No se pudo instalar python${PYVER}-venv." >&2; exit 1; }
+    else
+        echo "Falta ensurepip y no hay apt-get; instala el paquete venv de tu distribución." >&2
+        exit 1
+    fi
+fi
+
 echo "==> Instalando en ${PREFIX}"
 mkdir -p "${PREFIX}"
 cp -r "${SOURCE_DIR}/ispgestor_agent" "${PREFIX}/"

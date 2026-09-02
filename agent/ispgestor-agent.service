@@ -3,6 +3,10 @@ Description=Agente de aprovisionamiento de ISP Gestor
 Documentation=https://github.com/ironlink/ispgestor
 After=network-online.target
 Wants=network-online.target
+# Un agente que no arranca deja de detectar equipos en silencio; conviene que
+# systemd insista indefinidamente en vez de rendirse tras unos intentos.
+# Va en [Unit] y no en [Service]: ahí systemd la ignora con un aviso.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -16,9 +20,6 @@ User=root
 
 Restart=always
 RestartSec=10
-# Un agente que no arranca deja de detectar equipos en silencio; conviene que
-# systemd insista indefinidamente en vez de rendirse tras unos intentos.
-StartLimitIntervalSec=0
 
 StandardOutput=journal
 StandardError=journal

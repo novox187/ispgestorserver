@@ -5,9 +5,11 @@ namespace App\Http\Controllers\Agent;
 use App\Enums\AgentRole;
 use App\Http\Controllers\Controller;
 use App\Models\ProvisioningAgent;
+use App\Services\Provisioning\AgentInstallerBuilder;
 use App\Services\Provisioning\ProvisioningAuditor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -32,6 +34,42 @@ class AgentEnrollmentController extends Controller
 {
     public function __construct(private readonly ProvisioningAuditor $auditor)
     {
+    }
+
+    /**
+     * Instalador desatendido de un agente.
+     *
+     * Lo descarga la máquina donde va a vivir el agente, no el panel, así que
+     * no puede ir tras la sesión del administrador: lo protege una URL firmada
+     * con la misma caducidad que el token que entrega.
+     *
+     * Cada descarga emite un token de enrolamiento **nuevo**, que invalida el
+     * anterior. Es deliberado: así el token en claro solo existe dentro del
+     * script y nunca viaja en la URL, donde acabaría en los registros del
+     * servidor web y de cualquier proxy intermedio. La contrapartida es que
+     * descargar dos veces deja muerto el primer script, y que hacerlo sobre un
+     * agente ya enrolado lo desconecta — por eso queda auditado.
+     */
+    public function installer(int $id, AgentInstallerBuilder $builder): Response
+    {
+        $agent = ProvisioningAgent::findOrFail($id);
+
+        $yaEnrolado = $agent->enrolled_at !== null;
+        $token      = $agent->issueEnrollmentToken();
+
+        $this->auditor->agent($agent, ProvisioningAuditor::AGENT_REVOKED, [
+            'reason' => $yaEnrolado
+                ? 'Se descargó el instalador: se emitió un token nuevo y las credenciales anteriores quedan inválidas.'
+                : 'Se descargó el instalador y se emitió su token de enrolamiento.',
+        ]);
+
+        return response($builder->build($agent, $token), 200, [
+            'Content-Type'        => 'text/x-shellscript; charset=utf-8',
+            'Content-Disposition' => 'attachment; filename="' . $builder->filename($agent) . '"',
+            // El script lleva un token de un solo uso: no debe quedar en ninguna
+            // caché intermedia.
+            'Cache-Control'       => 'no-store, no-cache, must-revalidate',
+        ]);
     }
 
     public function enroll(Request $request): JsonResponse

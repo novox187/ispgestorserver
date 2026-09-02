@@ -307,6 +307,13 @@ Route::prefix('agent')->group(function () {
     Route::post('/enroll', [AgentEnrollmentController::class, 'enroll'])
         ->middleware('throttle:10,1');
 
+    // Instalador desatendido. Lo pide la máquina donde se instala el agente, no
+    // el panel, así que tampoco puede ir tras la sesión del administrador. Lo
+    // protege una URL firmada que caduca a la vez que el token que entrega.
+    Route::get('/installer/{id}', [AgentEnrollmentController::class, 'installer'])
+        ->name('agent.installer')
+        ->middleware(['signed', 'throttle:10,1']);
+
     Route::middleware(['agent.hmac', 'throttle:180,1'])->group(function () {
         Route::post('/heartbeat',        [AgentTaskController::class, 'heartbeat']);
         Route::post('/devices/detected', [DeviceDetectionController::class, 'store']);
