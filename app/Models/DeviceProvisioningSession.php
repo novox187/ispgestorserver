@@ -20,7 +20,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
  * inverso. Sin esa pila un fallo a mitad de camino dejaría una interfaz
  * WireGuard huérfana en el router o un peer fantasma en el hosting.
  *
- * La fila de `mikrotik_routers` se crea al final, no al principio: hacerlo antes
+ * La fila de `network_devices` se crea al final, no al principio: hacerlo antes
  * significaría que ante un fallo la regla "el primer router es primary"
  * (MikrotikRouter::booted) ya habría dejado al sistema devolviendo 423 en todas
  * las rutas con middleware `primary_router`.

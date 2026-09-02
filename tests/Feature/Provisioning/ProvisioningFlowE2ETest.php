@@ -104,7 +104,7 @@ it('no deja las credenciales de fábrica en el equipo', function () {
     expect($router->username)->not->toBe('admin')
         ->and(strlen((string) $router->password))->toBeGreaterThanOrEqual(16);
 
-    $raw = DB::table('mikrotik_routers')->where('id', $router->id)->value('password');
+    $raw = DB::table('network_devices')->where('id', $router->id)->value('password');
     expect($raw)->not->toBe($router->password);
 });
 

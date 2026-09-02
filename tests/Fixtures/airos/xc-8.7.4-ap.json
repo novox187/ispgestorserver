@@ -1,0 +1,29 @@
+{
+  "host": {
+    "hostname": "Sector-Sur-AP",
+    "uptime": 432000,
+    "fwversion": "XC.v8.7.4",
+    "devmodel": "Rocket 5AC Lite",
+    "cpuload": 31.0,
+    "totalram": 131072000,
+    "freeram": 48234496
+  },
+  "wireless": {
+    "essid": "SECTOR-SUR",
+    "mode": "ap",
+    "frequency": 5500,
+    "chanbw": 40,
+    "txpower": 25,
+    "signal": -58,
+    "noisef": -101,
+    "ccq": 88,
+    "txrate": 300,
+    "rxrate": 270,
+    "count": 2,
+    "sta": [
+      { "mac": "78:8A:20:AA:BB:CC", "signal": -62, "ccq": 91 },
+      { "mac": "78:8A:20:DD:EE:FF", "signal": -71, "ccq": 78 },
+      { "mac": "78:8A:20:00:11:22", "signal": -80, "ccq": 55 }
+    ]
+  }
+}

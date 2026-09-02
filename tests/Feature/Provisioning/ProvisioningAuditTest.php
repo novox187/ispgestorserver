@@ -1,6 +1,7 @@
 <?php
 
-use App\Jobs\MonitorMikrotikConnectivityJob;
+use App\Jobs\MonitorDeviceConnectivityJob;
+use App\Services\Devices\DeviceDriverRegistry;
 use App\Models\Audit;
 use App\Models\DeviceProvisioningSession;
 use App\Models\Employee;
@@ -180,7 +181,7 @@ it('audita el alta manual de un router, que antes no dejaba rastro', function ()
 
     $router = MikrotikRouter::first();
 
-    $audit = Audit::forRecord('mikrotik_routers', $router->id)
+    $audit = Audit::forRecord('network_devices', $router->id)
         ->where('operation', 'INSERT')
         ->first();
 
@@ -206,7 +207,7 @@ it('audita la despromoción del router principal, que el update masivo se saltab
     // El hook usa un update() masivo que no dispara eventos Eloquent: sin el
     // registro explícito, el cambio de router principal —que hace que todo el
     // sistema opere contra otro equipo— no dejaría ningún rastro.
-    $audit = Audit::forRecord('mikrotik_routers', $first->id)
+    $audit = Audit::forRecord('network_devices', $first->id)
         ->where('operation', 'PRIMARY_DEMOTED')
         ->first();
 
@@ -221,10 +222,10 @@ it('el monitor de conectividad no genera ruido en la auditoría', function () {
         'name' => 'Router', 'host' => '10.0.0.1', 'username' => 'a', 'password' => 'b',
     ]);
 
-    $baseline = Audit::forRecord('mikrotik_routers', $router->id)->count();
+    $baseline = Audit::forRecord('network_devices', $router->id)->count();
 
     $this->mock(MikrotikHealthChecker::class, function (MockInterface $m) {
-        $m->shouldReceive('check')->andReturn(['ok' => false, 'error' => 'timeout']);
+        $m->shouldReceive('resources')->andThrow(new RuntimeException('timeout'));
     });
 
     // El monitor corre cada 5 minutos y reescribe los campos de salud con
@@ -232,12 +233,12 @@ it('el monitor de conectividad no genera ruido en la auditoría', function () {
     // esto serían cientos de filas al día por router y ahogaría los cambios
     // que de verdad importan.
     foreach (range(1, 5) as $ignored) {
-        (new MonitorMikrotikConnectivityJob())->handle(app(MikrotikHealthChecker::class));
+        (new MonitorDeviceConnectivityJob())->handle(app(DeviceDriverRegistry::class));
     }
 
     expect($router->fresh()->consecutive_failures)->toBe(5)
         ->and($router->fresh()->connectivity_status)->toBe('disconnected')
-        ->and(Audit::forRecord('mikrotik_routers', $router->id)->count())->toBe($baseline);
+        ->and(Audit::forRecord('network_devices', $router->id)->count())->toBe($baseline);
 });
 
 it('sí audita un cambio real de credenciales o de host', function () {
@@ -247,7 +248,7 @@ it('sí audita un cambio real de credenciales o de host', function () {
 
     $router->update(['host' => '10.77.0.5', 'username' => 'ispgestor-api']);
 
-    $audit = Audit::forRecord('mikrotik_routers', $router->id)
+    $audit = Audit::forRecord('network_devices', $router->id)
         ->where('operation', 'UPDATE')
         ->latest('id')
         ->first();

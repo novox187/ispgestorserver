@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use RouterOS\Client;
 use RouterOS\Query;
 use Throwable;
@@ -18,13 +19,34 @@ use Throwable;
 class FirewallController extends Controller
 {
     /**
+     * Reglas de validación del `router_id` que reciben todos los endpoints.
+     *
+     * El filtro por fabricante no es decorativo. Los equipos de todos los
+     * fabricantes comparten la tabla `network_devices`, así que un simple
+     * `exists:network_devices,id` aceptaría el id de una antena Ubiquiti y el
+     * controlador intentaría abrirle una sesión de la API binaria de RouterOS
+     * para aplicarle reglas de firewall. Acotar aquí convierte ese disparate en
+     * un 422 legible en vez de un timeout incomprensible.
+     *
+     * @return list<mixed>
+     */
+    private static function routerIdRules(): array
+    {
+        return [
+            'required',
+            'integer',
+            Rule::exists('network_devices', 'id')->where('vendor', MikrotikRouter::VENDOR),
+        ];
+    }
+
+    /**
      * GET /api/mikrotik/firewall/snapshot?router_id=<id>
      * Devuelve el estado persistido de las reglas para el router dado.
      */
     public function snapshot(Request $request): JsonResponse
     {
         $request->validate([
-            'router_id' => 'required|integer|exists:mikrotik_routers,id',
+            'router_id' => self::routerIdRules(),
         ]);
 
         $router = MikrotikRouter::findOrFail($request->router_id);
@@ -59,7 +81,7 @@ class FirewallController extends Controller
     public function apply(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'router_id'        => 'required|integer|exists:mikrotik_routers,id',
+            'router_id'        => self::routerIdRules(),
             'reason'           => 'nullable|string|max:500',
             'snapshot'         => 'required|array',
             'snapshot.filters' => 'required|array',
@@ -228,7 +250,7 @@ class FirewallController extends Controller
     public function syncFromRouter(Request $request): JsonResponse
     {
         $request->validate([
-            'router_id' => 'required|integer|exists:mikrotik_routers,id',
+            'router_id' => self::routerIdRules(),
         ]);
 
         $router = MikrotikRouter::findOrFail($request->router_id);
@@ -357,7 +379,7 @@ class FirewallController extends Controller
     public function validate(Request $request): JsonResponse
     {
         $request->validate([
-            'router_id'        => 'required|integer|exists:mikrotik_routers,id',
+            'router_id'        => self::routerIdRules(),
             'snapshot'         => 'required|array',
             'snapshot.filters' => 'required|array',
             'snapshot.nat'     => 'required|array',
@@ -437,7 +459,7 @@ class FirewallController extends Controller
     public function applyLogs(Request $request): JsonResponse
     {
         $request->validate([
-            'router_id' => 'required|integer|exists:mikrotik_routers,id',
+            'router_id' => self::routerIdRules(),
             'per_page'  => 'nullable|integer|min:5|max:50',
         ]);
 
@@ -596,7 +618,7 @@ class FirewallController extends Controller
     public function routerStatus(Request $request): JsonResponse
     {
         $request->validate([
-            'router_id' => 'required|integer|exists:mikrotik_routers,id',
+            'router_id' => self::routerIdRules(),
         ]);
 
         $router = MikrotikRouter::findOrFail($request->router_id);
@@ -631,7 +653,7 @@ class FirewallController extends Controller
     public function mergeFromRouter(Request $request): JsonResponse
     {
         $request->validate([
-            'router_id' => 'required|integer|exists:mikrotik_routers,id',
+            'router_id' => self::routerIdRules(),
         ]);
 
         $router = MikrotikRouter::findOrFail($request->router_id);

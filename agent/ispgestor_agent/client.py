@@ -35,11 +35,17 @@ USER_AGENT = "ispgestor-agent/1.0"
 class ApiError(RuntimeError):
     """La API respondió con un error."""
 
-    def __init__(self, status: int, code: str, message: str):
+    def __init__(self, status: int, code: str, message: str, retry_after: int | None = None):
         self.status = status
         self.code = code
         self.message = message
+        #: Segundos que el servidor pide esperar (cabecera `Retry-After`).
+        self.retry_after = retry_after
         super().__init__(f"[{status} {code}] {message}")
+
+    @property
+    def is_rate_limited(self) -> bool:
+        return self.status == 429
 
 
 class TransportError(RuntimeError):
@@ -135,6 +141,48 @@ class ApiClient:
             },
         )
 
+    # ── Monitoreo ───────────────────────────────────────────────────────────
+
+    def monitoring_targets(self) -> dict:
+        """Equipos que este agente debe sondear, con credenciales resueltas."""
+        return self._request("GET", "/api/agent/monitoring/targets").get("data", {})
+
+    def push_samples(self, samples: list[dict]) -> dict:
+        """Envía un lote de lecturas.
+
+        En lote y no de una en una: con cientos de equipos, una petición por
+        muestra agotaría el límite del canal en segundos y multiplicaría por
+        cien el coste de firmar cada envío.
+        """
+        return self._request(
+            "POST", "/api/agent/monitoring/samples", {"samples": samples}
+        ).get("data", {})
+
+    # ── Barridos de descubrimiento ──────────────────────────────────────────
+
+    def pending_scans(self) -> list[dict]:
+        """Barridos que el operador ha pedido para este agente."""
+        return self._request("GET", "/api/agent/monitoring/scans").get("data", {}).get("scans", [])
+
+    def report_scan(
+        self,
+        scan_id: int,
+        status: str,
+        findings: list[dict] | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> dict:
+        return self._request(
+            "POST",
+            f"/api/agent/monitoring/scans/{scan_id}/report",
+            {
+                "status": status,
+                "findings": findings or [],
+                "error_code": error_code,
+                "error_message": error_message,
+            },
+        ).get("data", {})
+
     # ── Interno ─────────────────────────────────────────────────────────────
 
     def _request(self, method: str, path: str, payload: Any = None, signed: bool = True) -> dict:
@@ -158,9 +206,14 @@ class ApiClient:
             headers[HEADER_NONCE] = nonce
             headers[HEADER_SIGNATURE] = sign(self.secret, method, path, timestamp, nonce, body)
 
+        # Un GET viaja sin cuerpo. Mandar `b""` haría que urllib anunciara
+        # Content-Length y algunos intermediarios lo tratan distinto; además la
+        # firma se calcula sobre cadena vacía, así que ambos extremos coinciden.
+        data = None if method.upper() == "GET" else body.encode("utf-8")
+
         request = urllib.request.Request(
             url=f"{self.base_url}{path}",
-            data=body.encode("utf-8"),
+            data=data,
             headers=headers,
             method=method,
         )
@@ -187,8 +240,19 @@ class ApiClient:
 
         error = payload.get("error") or {}
 
+        # El servidor limita el canal por agente. Sin leer `Retry-After` el
+        # agente seguiría martilleando cada pocos segundos contra un 429, que es
+        # la forma más rápida de convertir un límite en una caída.
+        retry_after = None
+        try:
+            raw = exc.headers.get("Retry-After") if exc.headers else None
+            retry_after = int(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            retry_after = None
+
         return ApiError(
             status=exc.code,
             code=error.get("code") or f"HTTP_{exc.code}",
             message=error.get("message") or payload.get("message") or str(exc.reason),
+            retry_after=retry_after,
         )

@@ -123,6 +123,15 @@ class RouterOsSession:
             if all(str(row.get(key)) == str(value) for key, value in filters.items())
         ]
 
+    def resource(self) -> dict:
+        """`/system/resource` en crudo: uptime, CPU, memoria, modelo y versión.
+
+        Extraído a método propio porque lo usan dos caminos con propósitos
+        distintos: `identify()` durante el alta, y el rol de monitoreo en cada
+        vuelta. Tenerlo en un solo sitio evita que se separen.
+        """
+        return (self.rows("/system/resource") or [{}])[0]
+
     # ── Identificación ──────────────────────────────────────────────────────
 
     def identify(self) -> dict:
@@ -133,7 +142,7 @@ class RouterOsSession:
         con un juego de paquetes recortado en el que WireGuard puede faltar, y
         mantener una lista de modelos envejecería mal.
         """
-        resource = (self.rows("/system/resource") or [{}])[0]
+        resource = self.resource()
         identity = (self.rows("/system/identity") or [{}])[0]
 
         try:

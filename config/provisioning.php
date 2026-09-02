@@ -15,7 +15,7 @@
 | cambiar un parámetro operativo no debe exigir un redespliegue en Coolify.
 |
 | Las credenciales de los routers siguen viviendo cifradas en la tabla
-| `mikrotik_routers`, y los secretos de los agentes en `provisioning_agents`.
+| `network_devices`, y los secretos de los agentes en `provisioning_agents`.
 | Aquí no hay ningún secreto.
 |
 */

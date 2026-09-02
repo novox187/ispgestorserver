@@ -1,6 +1,7 @@
 <?php
 
-use App\Jobs\MonitorMikrotikConnectivityJob;
+use App\Jobs\MonitorDeviceConnectivityJob;
+use App\Services\Devices\DeviceDriverRegistry;
 use App\Models\MikrotikRouter;
 use App\Models\NotificationLog;
 use App\Notifications\Core\Enums\NotificationCategory;
@@ -52,10 +53,10 @@ it('no alerta tras un único fallo (por debajo del umbral)', function () {
     $router = makeRouter();
 
     $this->mock(MikrotikHealthChecker::class, function (MockInterface $m) {
-        $m->shouldReceive('check')->andReturn(['ok' => false, 'error' => 'timeout']);
+        $m->shouldReceive('resources')->andThrow(new RuntimeException('timeout'));
     });
 
-    (new MonitorMikrotikConnectivityJob())->handle(app(MikrotikHealthChecker::class));
+    (new MonitorDeviceConnectivityJob())->handle(app(DeviceDriverRegistry::class));
 
     expect(NotificationLog::count())->toBe(0);
     expect($router->refresh()->consecutive_failures)->toBe(1);
@@ -65,10 +66,10 @@ it('emite alerta CRITICAL tras alcanzar el umbral de fallos', function () {
     $router = makeRouter(['consecutive_failures' => 1]);
 
     $this->mock(MikrotikHealthChecker::class, function (MockInterface $m) {
-        $m->shouldReceive('check')->andReturn(['ok' => false, 'error' => 'conn refused']);
+        $m->shouldReceive('resources')->andThrow(new RuntimeException('conn refused'));
     });
 
-    (new MonitorMikrotikConnectivityJob())->handle(app(MikrotikHealthChecker::class));
+    (new MonitorDeviceConnectivityJob())->handle(app(DeviceDriverRegistry::class));
 
     $log = NotificationLog::first();
     expect($log)->not->toBeNull()
@@ -83,11 +84,11 @@ it('deduplica la alerta cuando se reejecuta el monitor inmediatamente', function
     makeRouter(['consecutive_failures' => 1]);
 
     $this->mock(MikrotikHealthChecker::class, function (MockInterface $m) {
-        $m->shouldReceive('check')->andReturn(['ok' => false, 'error' => 'conn refused']);
+        $m->shouldReceive('resources')->andThrow(new RuntimeException('conn refused'));
     });
 
-    (new MonitorMikrotikConnectivityJob())->handle(app(MikrotikHealthChecker::class));
-    (new MonitorMikrotikConnectivityJob())->handle(app(MikrotikHealthChecker::class));
+    (new MonitorDeviceConnectivityJob())->handle(app(DeviceDriverRegistry::class));
+    (new MonitorDeviceConnectivityJob())->handle(app(DeviceDriverRegistry::class));
 
     $statuses = NotificationLog::pluck('status')->toArray();
     expect($statuses)->toContain(NotificationStatus::SENT->value)
@@ -102,10 +103,10 @@ it('emite alerta INFO cuando un router disconnected vuelve a responder', functio
     ]);
 
     $this->mock(MikrotikHealthChecker::class, function (MockInterface $m) {
-        $m->shouldReceive('check')->andReturn(['ok' => true, 'error' => null]);
+        $m->shouldReceive('resources')->andReturn(['board-name' => 'RB750Gr3', 'version' => '7.11.2', 'uptime' => '1d2h3m']);
     });
 
-    (new MonitorMikrotikConnectivityJob())->handle(app(MikrotikHealthChecker::class));
+    (new MonitorDeviceConnectivityJob())->handle(app(DeviceDriverRegistry::class));
 
     $log = NotificationLog::first();
     expect($log)->not->toBeNull()
@@ -120,10 +121,10 @@ it('omite routers inactivos', function () {
     makeRouter(['is_active' => false]);
 
     $this->mock(MikrotikHealthChecker::class, function (MockInterface $m) {
-        $m->shouldNotReceive('check');
+        $m->shouldNotReceive('resources');
     });
 
-    (new MonitorMikrotikConnectivityJob())->handle(app(MikrotikHealthChecker::class));
+    (new MonitorDeviceConnectivityJob())->handle(app(DeviceDriverRegistry::class));
 
     expect(NotificationLog::count())->toBe(0);
 });

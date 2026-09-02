@@ -38,6 +38,18 @@ class AgentConfig:
     # IP de fábrica que se sondea al subir el enlace.
     probe_addresses: list[str] = field(default_factory=lambda: ["192.168.88.1"])
 
+    # ── Rol `monitor` ───────────────────────────────────────────────────────
+    #
+    # Rangos que este agente tiene permitido barrer. **Vive aquí, en la máquina
+    # del agente, y no en el servidor a propósito.** Es el mismo principio que
+    # ya aplica `VpnDriver` con su lista blanca de operaciones: el agente valida
+    # lo que le mandan contra su propia configuración, de modo que ni siquiera un
+    # servidor comprometido puede convertirlo en un escáner de red dirigido.
+    #
+    # Vacío significa «no barrer nada», no «barrer cualquier cosa»: una lista sin
+    # rellenar por descuido no puede dejar la puerta abierta.
+    scannable_cidrs: list[str] = field(default_factory=list)
+
     # ── Rol `vpn_host` ──────────────────────────────────────────────────────
     wg_interface: str = "wg0"
     wg_config_path: str = "/etc/wireguard/wg0.conf"
@@ -72,6 +84,12 @@ class AgentConfig:
                 "interface": self.wg_interface,
                 "subnet": self.subnet,
             }
+
+        if self.role == "monitor":
+            # Se publican los rangos para que el panel pueda proponerlos al
+            # operador. Publicarlos no los autoriza: la validación sigue
+            # haciéndose aquí, contra este mismo fichero, en cada barrido.
+            return {"scannable_cidrs": self.scannable_cidrs}
 
         return {
             "provisioning_interfaces": self.provisioning_interfaces,

@@ -1,0 +1,5 @@
+# Dependencias SOLO de desarrollo. No se instalan en la oficina ni en el
+# hosting: el agente en producción sigue teniendo una única dependencia.
+-r requirements.txt
+
+pytest==8.3.4

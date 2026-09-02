@@ -3,6 +3,8 @@
 namespace App\Providers;
 
 use App\Models\MikrotikRouter;
+use App\Models\NetworkDevice;
+use App\Observers\PrimaryRouterObserver;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\ServiceProvider;
@@ -33,16 +35,34 @@ class MikroTikServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        //
+        /*
+         * El invariante del router primary se registra para las DOS clases que
+         * ven la tabla `network_devices`. Eloquent despacha los eventos de
+         * modelo bajo el nombre de la clase concreta, así que registrarlo solo
+         * en una dejaría la otra como puerta trasera por la que borrar el
+         * primary sin que nadie promueva un sustituto — y el sistema entero
+         * respondería 423 sin un solo error en los logs.
+         */
+        MikrotikRouter::observe(PrimaryRouterObserver::class);
+        NetworkDevice::observe(PrimaryRouterObserver::class);
     }
 
     private function buildClient(): ?Client
     {
-        // En arranques tempranos (migrate, comandos sobre BD vacía) la tabla
-        // puede aún no existir. Devolver null permite que el provider no rompa
-        // el bootstrap de la app.
+        /*
+         * En arranques tempranos (migrate, comandos sobre BD vacía) la tabla
+         * puede aún no existir. Devolver null permite que el provider no rompa
+         * el bootstrap de la app.
+         *
+         * El nombre tiene que seguir al de la tabla: si esta comprobación se
+         * queda mirando una tabla que ya no existe, devuelve null en cada
+         * request, el cliente de RouterOS nunca se construye y TODO el módulo
+         * MikroTik pasa a modo no-op —colas, firewall, suspensiones— sin lanzar
+         * un solo error. Es el fallo más silencioso que puede tener este
+         * archivo.
+         */
         try {
-            if (!Schema::hasTable('mikrotik_routers')) {
+            if (!Schema::hasTable('network_devices')) {
                 return null;
             }
         } catch (\Throwable) {

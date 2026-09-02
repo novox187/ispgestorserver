@@ -2,64 +2,58 @@
 
 namespace App\Models;
 
-use App\Traits\Auditable;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Request;
 
 /**
- * Representa un dispositivo MikroTik registrado en el sistema.
+ * Un dispositivo MikroTik: la especialización de `NetworkDevice` que tiene plano
+ * de control.
  *
- * El **router primary** (un único registro con `is_primary=true`) es el que
- * usan por defecto todos los servicios del sistema cuando no se especifica un
+ * El **router primary** (un único registro con `is_primary=true`) es el que usan
+ * por defecto todos los servicios del sistema cuando no se especifica un
  * `router_id`: `MikroTikServiceProvider`, sincronización de colas, firewall,
- * suspensiones, monitoreo. Es la única fuente de credenciales para conectarse
- * al RouterOS — el sistema ya no lee `MIKROTIK_*` de variables de entorno.
+ * suspensiones, monitoreo. Es la única fuente de credenciales para conectarse al
+ * RouterOS — el sistema ya no lee `MIKROTIK_*` de variables de entorno. Las
+ * reglas que sostienen ese invariante viven en `PrimaryRouterObserver`.
  *
- * Reglas automáticas en `booted()`:
- *  - El primer router creado se marca automáticamente como primary.
- *  - Cuando se marca un nuevo router como primary, el anterior se desmarca.
- *  - Si se elimina el primary, otro router toma su lugar automáticamente.
+ * ## Convivencia con otros fabricantes
+ *
+ * Desde que el inventario admite antenas Ubiquiti, todos los equipos comparten
+ * la tabla `network_devices`. Esta clase sigue representando **solo los
+ * MikroTik**: un scope global la acota a `vendor='mikrotik'`, de modo que las
+ * decenas de servicios que consultan routers no tuvieron que cambiar ni una
+ * línea y no pueden tropezarse con una antena por accidente.
+ *
+ * **Hereda de `NetworkDevice` y no es una clase hermana** por una razón muy
+ * concreta: así un MikroTik *es* un dispositivo de red también para el sistema
+ * de tipos. Cualquier servicio nuevo —drivers, monitoreo, notificaciones, mapa—
+ * puede tipar sus firmas a `NetworkDevice` y aceptar routers y antenas por
+ * igual. Con dos clases hermanas habría hecho falta duplicar cada firma.
  */
-class MikrotikRouter extends Model
+class MikrotikRouter extends NetworkDevice
 {
-    use Auditable;
+    public const VENDOR = 'mikrotik';
+    public const DRIVER = 'routeros';
 
     /**
-     * Ids que este guardado despromovió, a la espera de auditarse en `saved`.
+     * Superficie de escritura propia: incluye `is_primary` y los campos del
+     * plano de control, que `NetworkDevice` deja fuera a propósito porque no
+     * significan nada para una antena.
      *
-     * Propiedad declarada y no atributo dinámico: así Eloquent no la confunde
-     * con una columna e intenta persistirla.
-     *
-     * @var list<int>
+     * `vendor` sigue fuera: lo estampa `creating`, y cambiarlo por asignación
+     * masiva convertiría un router en otra cosa a mitad de vida, dejando las
+     * reglas de firewall y el perfil VPN apuntando a una fila que su propia
+     * clase ya no ve.
      */
-    public array $pendingPrimaryDemotions = [];
-
-    /**
-     * El monitor de conectividad reescribe los campos de salud cada 5 minutos
-     * con `forceFill()->save()`, que sí dispara eventos Eloquent. Sin excluirlos
-     * el trait generaría cientos de filas de auditoría al día por router y
-     * ahogaría los cambios que sí importan (credenciales, host, primary).
-     */
-    protected static function auditIgnoredFields(): array
-    {
-        return [
-            'connectivity_status',
-            'last_health_check_at',
-            'last_connected_at',
-            'last_disconnected_at',
-            'consecutive_failures',
-            'last_loaded_at',
-            'last_applied_at',
-        ];
-    }
-
     protected $fillable = [
         'name',
+        'role',
+        'driver',
+        'model',
+        'firmware_version',
+        'latitude',
+        'longitude',
         'host',
         'port',
         'username',
@@ -84,118 +78,43 @@ class MikrotikRouter extends Model
         'consecutive_failures',
     ];
 
-    protected $hidden = ['password'];
 
-    protected $casts = [
-        'is_active'            => 'boolean',
-        'is_primary'           => 'boolean',
-        'port'                 => 'integer',
-        'last_loaded_at'       => 'datetime',
-        'last_applied_at'      => 'datetime',
-        'last_health_check_at' => 'datetime',
-        'last_connected_at'    => 'datetime',
-        'last_disconnected_at' => 'datetime',
-        'provisioned_at'       => 'datetime',
-        'consecutive_failures' => 'integer',
-        'password'             => 'encrypted',
-    ];
 
     protected static function booted(): void
     {
-        // El primer router creado pasa automáticamente a ser primary y activo.
+        parent::booted();
+
+        /*
+         * Acota la clase a los MikroTik de la tabla compartida. La columna va
+         * cualificada con el nombre de la tabla porque cualquier consulta que
+         * haga join con otra que también tenga `vendor` —`network_links`, por
+         * ejemplo— haría la referencia ambigua y MySQL rechazaría la consulta.
+         */
+        static::addGlobalScope('vendor_mikrotik', function (Builder $query) {
+            $query->where('network_devices.vendor', self::VENDOR);
+        });
+
+        /*
+         * El scope global filtra lecturas, no inserciones: sin esto un router
+         * recién creado nacería sin fabricante y quedaría invisible para su
+         * propia clase nada más guardarse.
+         */
         static::creating(function (self $router) {
-            if (!static::query()->exists()) {
-                $router->is_primary = true;
-                if ($router->is_active === null) {
-                    $router->is_active = true;
-                }
-            }
+            $router->vendor = self::VENDOR;
+            $router->driver ??= self::DRIVER;
+            $router->role   ??= 'core_router';
         });
 
-        // Solo un router puede ser primary a la vez: cuando uno se marca como
-        // tal, el anterior se desmarca dentro de la misma transacción.
-        //
-        // El update() es masivo y por tanto NO dispara eventos Eloquent: el
-        // trait Auditable no ve la despromoción. Se registra a mano para que el
-        // historial explique por qué un router dejó de ser primary — es un
-        // cambio con consecuencias (todo el sistema pasa a operar contra otro
-        // equipo) y sin esta línea no dejaría rastro alguno.
-        static::saving(function (self $router) {
-            if (!$router->is_primary || !$router->isDirty('is_primary')) {
-                return;
-            }
-
-            $demoted = static::query()
-                ->where('id', '!=', $router->id ?? 0)
-                ->where('is_primary', true)
-                ->pluck('id')
-                ->all();
-
-            if ($demoted === []) {
-                return;
-            }
-
-            static::query()->whereIn('id', $demoted)->update(['is_primary' => false]);
-
-            // La auditoría se aplaza a `saved`: en un alta, aquí el router que
-            // promueve todavía no tiene id y el registro saldría sin decir
-            // quién ocupó su lugar.
-            $router->pendingPrimaryDemotions = $demoted;
-        });
-
-        static::saved(function (self $router) {
-            foreach ($router->pendingPrimaryDemotions as $demotedId) {
-                self::auditPrimaryDemotion($demotedId, $router);
-            }
-
-            $router->pendingPrimaryDemotions = [];
-        });
-
-        // Si se elimina el primary, promover otro (preferentemente activo) para
-        // que el sistema no quede sin router por defecto.
-        static::deleted(function (self $router) {
-            if ($router->is_primary) {
-                $replacement = static::query()
-                    ->orderByDesc('is_active')
-                    ->orderBy('id')
-                    ->first();
-                if ($replacement) {
-                    $replacement->is_primary = true;
-                    $replacement->saveQuietly();
-                }
-            }
-        });
-    }
-
-    /**
-     * Deja constancia de una despromoción que el update() masivo del hook
-     * `saving` no puede registrar por sí solo. Igual que en el trait, un fallo
-     * al auditar nunca rompe la operación de negocio que lo originó.
-     */
-    private static function auditPrimaryDemotion(int $demotedId, self $promoted): void
-    {
-        try {
-            Audit::create([
-                'table_name' => 'mikrotik_routers',
-                'operation'  => 'PRIMARY_DEMOTED',
-                'record_id'  => (string) $demotedId,
-                'old_values' => ['is_primary' => true],
-                'new_values' => [
-                    'is_primary'         => false,
-                    'promoted_router_id' => $promoted->id,
-                    'promoted_router'    => $promoted->name,
-                    'timestamp'          => now()->toIso8601String(),
-                ],
-                'user_id'    => Auth::id(),
-                'user_type'  => Auth::user() ? get_class(Auth::user()) : null,
-                'ip_address' => Request::ip() ?? '127.0.0.1',
-            ]);
-        } catch (\Throwable $e) {
-            Log::error('MikrotikRouter: fallo al auditar la despromoción de primary.', [
-                'demoted_id' => $demotedId,
-                'error'      => $e->getMessage(),
-            ]);
-        }
+        /*
+         * Las reglas del router primary —el primero nace primary, solo hay uno,
+         * y al borrarlo se promueve otro— NO viven aquí sino en
+         * `PrimaryRouterObserver`, registrado para esta clase y para
+         * `NetworkDevice`. Eloquent despacha los eventos bajo el nombre de la
+         * clase concreta, así que un hook declarado aquí sería invisible para
+         * las operaciones que entren por el modelo genérico, y bastaría con
+         * borrar el primary desde el inventario para dejar el sistema sin router
+         * por defecto sin un solo error en los logs.
+         */
     }
 
     public function scopePrimary(Builder $query): Builder

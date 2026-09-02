@@ -6,7 +6,7 @@
 |--------------------------------------------------------------------------
 |
 | Las credenciales y datos de conexión de cada router viven en la tabla
-| `mikrotik_routers` y se administran desde el panel (MikroTik → Dispositivos).
+| `network_devices` y se administran desde el panel (MikroTik → Dispositivos).
 |
 | El sistema usa el router marcado como `is_primary=true` para todas las
 | operaciones por defecto. No hay variables de entorno `MIKROTIK_*` para

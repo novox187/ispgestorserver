@@ -143,10 +143,10 @@ class AutomationSettingsSeeder extends Seeder
                 ],
             ],
             [
-                'key'         => 'mikrotik_connectivity_monitor',
-                'name'        => 'Monitor de Conectividad MikroTik',
-                'description' => 'Verifica periódicamente la conectividad con cada router MikroTik activo. Tras N fallos consecutivos emite una alerta CRITICAL al canal correspondiente; al recuperarse emite un INFO.',
-                'job_class'   => \App\Jobs\MonitorMikrotikConnectivityJob::class,
+                'key'         => 'device_connectivity_monitor',
+                'name'        => 'Monitor de Conectividad de Dispositivos',
+                'description' => 'Verifica periódicamente la conectividad con cada equipo activo del inventario (routers MikroTik y antenas Ubiquiti). Tras N fallos consecutivos emite una alerta CRITICAL al canal correspondiente; al recuperarse emite un INFO.',
+                'job_class'   => \App\Jobs\MonitorDeviceConnectivityJob::class,
                 'queue'       => 'default',
                 'enabled'     => true,
                 'schedule_type'   => 'every_five_minutes',
@@ -159,7 +159,7 @@ class AutomationSettingsSeeder extends Seeder
                     'consecutive_failures_threshold' => [
                         'type'        => 'integer',
                         'label'       => 'Fallos consecutivos para alertar',
-                        'description' => 'Número de chequeos fallidos seguidos antes de marcar el router como desconectado y emitir alerta. Evita falsos positivos por timeouts puntuales.',
+                        'description' => 'Número de chequeos fallidos seguidos antes de marcar el equipo como desconectado y emitir alerta. Evita falsos positivos por timeouts puntuales.',
                         'min'         => 1,
                         'max'         => 10,
                         'required'    => true,
@@ -167,9 +167,43 @@ class AutomationSettingsSeeder extends Seeder
                     'health_check_timeout_seconds' => [
                         'type'        => 'integer',
                         'label'       => 'Timeout del chequeo (segundos)',
-                        'description' => 'Tiempo máximo de espera por chequeo individual contra el router. Si el RouterOS no responde en este lapso, el chequeo cuenta como fallo.',
+                        'description' => 'Tiempo máximo de espera por chequeo individual contra el equipo. Si no responde en este lapso, el chequeo cuenta como fallo.',
                         'min'         => 1,
                         'max'         => 30,
+                        'required'    => true,
+                    ],
+                ],
+            ],
+
+            [
+                'key'         => 'device_metrics_rollup',
+                'name'        => 'Agregado y Poda de Métricas',
+                'description' => 'Convierte las muestras de telemetría en resúmenes por hora y borra el detalle vencido. '
+                    . 'Sin él la tabla de muestras crece unas 100.000 filas diarias y acaba haciendo inviables los backups.',
+                'job_class'   => \App\Jobs\RollUpDeviceMetricsJob::class,
+                'queue'       => 'default',
+                'enabled'     => true,
+                'schedule_type'   => 'hourly',
+                'schedule_config' => [],
+                'params'          => [
+                    'samples_retention_days'  => 14,
+                    'hourly_retention_months' => 13,
+                ],
+                'params_schema'   => [
+                    'samples_retention_days' => [
+                        'type'        => 'integer',
+                        'label'       => 'Retención del detalle (días)',
+                        'description' => 'Días que se conservan las muestras individuales. Sirven para diagnosticar una incidencia en curso; pasado ese plazo lo que queda son los resúmenes por hora.',
+                        'min'         => 1,
+                        'max'         => 90,
+                        'required'    => true,
+                    ],
+                    'hourly_retention_months' => [
+                        'type'        => 'integer',
+                        'label'       => 'Retención de los resúmenes (meses)',
+                        'description' => 'Meses que se conservan los agregados horarios. Trece permite comparar un enlace con el mismo mes del año pasado.',
+                        'min'         => 1,
+                        'max'         => 60,
                         'required'    => true,
                     ],
                 ],

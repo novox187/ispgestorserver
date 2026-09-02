@@ -14,12 +14,14 @@ enum AgentRole: string
 {
     case PROVISIONER = 'provisioner';
     case VPN_HOST    = 'vpn_host';
+    case MONITOR     = 'monitor';
 
     public function label(): string
     {
         return match ($this) {
             self::PROVISIONER => 'Agente de aprovisionamiento (oficina)',
             self::VPN_HOST    => 'Agente de VPN (hosting)',
+            self::MONITOR     => 'Agente de monitoreo (sondea el parque)',
         };
     }
 
@@ -43,6 +45,19 @@ enum AgentRole: string
                 ProvisioningTaskType::VERIFY_HOST_PEER,
                 ProvisioningTaskType::ROLLBACK_HOST_PEER,
             ],
+            /*
+             * El monitor no reclama ninguna tarea de la saga: su trabajo es leer
+             * el estado del parque y empujar muestras, en un carril propio.
+             *
+             * Es un rol aparte y no una capacidad más del `provisioner` porque
+             * ese corre un único bucle de 3 segundos que atiende MNDP, el carrier
+             * de la NIC y la cola de tareas. Sondear cientos de antenas por HTTPS
+             * son minutos por vuelta, y meterlo ahí degradaría el alta automática
+             * de routers como efecto colateral del monitoreo. Separarlo permite
+             * además desplegarlo en una torre sin darle capacidad de tocar la
+             * configuración de ningún equipo.
+             */
+            self::MONITOR => [],
         };
     }
 

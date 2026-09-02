@@ -10,7 +10,7 @@ use Symfony\Component\HttpFoundation\Response;
 /**
  * Bloquea rutas que dependen de un router MikroTik configurado.
  *
- * Si la tabla `mikrotik_routers` no tiene ningún registro marcado como
+ * Si la tabla `network_devices` no tiene ningún registro marcado como
  * `is_primary=true`, devuelve **423 Locked** con un payload que el frontend
  * usa para redirigir al admin al formulario de creación.
  *

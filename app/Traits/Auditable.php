@@ -3,6 +3,7 @@
 namespace App\Traits;
 
 use App\Models\Audit;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Request;
@@ -41,6 +42,21 @@ trait Auditable
     protected static function resolvedAuditExcludedFields(): array
     {
         return array_merge(static::$auditExcludedFields, static::auditIgnoredFields());
+    }
+
+    /**
+     * Nombre con el que este modelo se identifica en `audits.table_name`.
+     *
+     * Por defecto es la tabla real, que es lo correcto salvo cuando varios
+     * modelos comparten tabla o cuando una tabla se renombra: en ambos casos el
+     * historial se partiría en dos y el visor mostraría la vida de un mismo
+     * equipo troceada. `MikrotikRouter` y `NetworkDevice` conviven sobre
+     * `network_devices` y ambos devuelven ese nombre, de modo que el historial
+     * de un router es uno solo se escriba desde donde se escriba.
+     */
+    protected static function auditTableName(Model $model): string
+    {
+        return $model->getTable();
     }
 
     /**
@@ -108,7 +124,7 @@ trait Auditable
         // negocio que la originó: se registra en el log para revisión.
         try {
             Audit::create([
-                'table_name' => $model->getTable(),
+                'table_name' => static::auditTableName($model),
                 'operation' => $operation,
                 'record_id' => (string) $model->getKey(),
                 'old_values' => $oldValues,
@@ -119,7 +135,7 @@ trait Auditable
             ]);
         } catch (\Throwable $e) {
             Log::error('Auditable: fallo al registrar auditoría.', [
-                'table'     => $model->getTable(),
+                'table'     => static::auditTableName($model),
                 'operation' => $operation,
                 'record_id' => (string) $model->getKey(),
                 'error'     => $e->getMessage(),

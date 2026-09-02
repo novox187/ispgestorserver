@@ -36,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
     enroll = commands.add_parser("enroll", help="Canjea el token de enrolamiento por credenciales.")
     enroll.add_argument("--url", required=True, help="URL base de la API (ej: https://api.ironlink.uk)")
     enroll.add_argument("--token", required=True, help="Token de un solo uso generado en el panel.")
-    enroll.add_argument("--role", choices=["provisioner", "vpn_host"], help="Rol; se toma del servidor si se omite.")
+    enroll.add_argument("--role", choices=["provisioner", "vpn_host", "monitor"], help="Rol; se toma del servidor si se omite.")
     enroll.add_argument("--interfaces", help="NIC de aprovisionamiento separadas por coma (rol provisioner).")
     enroll.add_argument("--probe", default="192.168.88.1", help="IP de fábrica a sondear (rol provisioner).")
     enroll.add_argument("--wg-interface", default="wg0", help="Interfaz WireGuard del host (rol vpn_host).")
@@ -177,6 +177,10 @@ def _run(args) -> int:
         from .roles.vpn_host import VpnHostRole
 
         VpnHostRole(config, client).run(__version__)
+    elif config.role == "monitor":
+        from .roles.monitor import MonitorRole
+
+        MonitorRole(config, client).run(__version__)
     else:
         from .roles.provisioner import ProvisionerRole
 

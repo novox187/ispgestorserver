@@ -25,6 +25,9 @@ use App\Http\Controllers\Admin\ChatController as AdminChatController;
 use App\Http\Controllers\Admin\InternetServiceProviderController;
 use App\Http\Controllers\Admin\IspConnectionController;
 use App\Http\Controllers\Admin\MikrotikRouterController;
+use App\Http\Controllers\Admin\NetworkDeviceController;
+use App\Http\Controllers\Admin\NetworkScanController;
+use App\Http\Controllers\Admin\NetworkTopologyController;
 use App\Http\Controllers\FirewallController;
 use App\Http\Controllers\SettingController;
 use App\Http\Controllers\Admin\SettingController as AdminSettingController;
@@ -37,6 +40,7 @@ use App\Http\Controllers\Admin\ProvisioningAgentController as AdminProvisioningA
 use App\Http\Controllers\Agent\AgentEnrollmentController;
 use App\Http\Controllers\Agent\AgentTaskController;
 use App\Http\Controllers\Agent\DeviceDetectionController;
+use App\Http\Controllers\Agent\MonitoringController;
 
 // ── Broadcasting Auth (Reverb / Pusher) ──────────────────────────────────────
 // Acepta tokens de cliente Y de empleado a través de auth:sanctum
@@ -106,6 +110,66 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
     Route::post('/mikrotik-routers', [MikrotikRouterController::class, 'store'])->middleware('super_admin');
     Route::put('/mikrotik-routers/{id}', [MikrotikRouterController::class, 'update'])->middleware('super_admin');
     Route::delete('/mikrotik-routers/{id}', [MikrotikRouterController::class, 'destroy'])->middleware('super_admin');
+
+    // ── Inventario de red (todos los fabricantes) ────────────────────────────
+    //
+    // Convive con el CRUD de arriba en vez de sustituirlo: aquel gobierna el
+    // plano de control de MikroTik —quién es el primary, credenciales de la API
+    // de RouterOS— y este el parque entero, que es lo que necesitan el monitoreo
+    // y el mapa. Los MikroTik son de solo lectura por aquí; el controlador lo
+    // rechaza explícitamente para que no haya dos puertas de escritura sobre la
+    // misma fila.
+    Route::prefix('network')->group(function () {
+        Route::get('/devices', [NetworkDeviceController::class, 'index'])
+            ->middleware('permission:mikrotik.ver');
+        Route::get('/devices/{id}', [NetworkDeviceController::class, 'show'])
+            ->middleware('permission:mikrotik.ver');
+        Route::post('/devices/{id}/test', [NetworkDeviceController::class, 'test'])
+            ->middleware('permission:mikrotik.gestionar');
+
+        Route::post('/devices', [NetworkDeviceController::class, 'store'])
+            ->middleware('permission:mikrotik.gestionar');
+        Route::put('/devices/{id}', [NetworkDeviceController::class, 'update'])
+            ->middleware('permission:mikrotik.gestionar');
+        Route::delete('/devices/{id}', [NetworkDeviceController::class, 'destroy'])
+            ->middleware('super_admin');
+
+        // Barridos de descubrimiento. Pedir uno lanza tráfico contra decenas de
+        // direcciones de la red del cliente, así que exige permiso de gestión —y
+        // queda auditado con quién lo pidió.
+        Route::get('/scans', [NetworkScanController::class, 'index'])
+            ->middleware('permission:mikrotik.ver');
+        Route::get('/scans/{id}', [NetworkScanController::class, 'show'])
+            ->middleware('permission:mikrotik.ver');
+        Route::post('/scans', [NetworkScanController::class, 'store'])
+            ->middleware('permission:mikrotik.gestionar');
+        Route::delete('/scans/{id}', [NetworkScanController::class, 'destroy'])
+            ->middleware('permission:mikrotik.gestionar');
+        Route::post('/scan-findings/{id}/adopt', [NetworkScanController::class, 'adopt'])
+            ->middleware('permission:mikrotik.gestionar');
+
+        // ── Topología y mapa ─────────────────────────────────────────────────
+        Route::get('/map', [NetworkTopologyController::class, 'map'])
+            ->middleware('permission:mikrotik.ver');
+
+        Route::get('/sites', [NetworkTopologyController::class, 'sites'])
+            ->middleware('permission:mikrotik.ver');
+        Route::post('/sites', [NetworkTopologyController::class, 'storeSite'])
+            ->middleware('permission:mikrotik.gestionar');
+        Route::put('/sites/{id}', [NetworkTopologyController::class, 'updateSite'])
+            ->middleware('permission:mikrotik.gestionar');
+        Route::delete('/sites/{id}', [NetworkTopologyController::class, 'destroySite'])
+            ->middleware('permission:mikrotik.gestionar');
+
+        Route::get('/links', [NetworkTopologyController::class, 'links'])
+            ->middleware('permission:mikrotik.ver');
+        Route::post('/links', [NetworkTopologyController::class, 'storeLink'])
+            ->middleware('permission:mikrotik.gestionar');
+        Route::put('/links/{id}', [NetworkTopologyController::class, 'updateLink'])
+            ->middleware('permission:mikrotik.gestionar');
+        Route::delete('/links/{id}', [NetworkTopologyController::class, 'destroyLink'])
+            ->middleware('permission:mikrotik.gestionar');
+    });
 
     // ── Aprovisionamiento automático de dispositivos ─────────────────────────
     // Lectura para cualquier empleado con visibilidad de MikroTik; toda acción
@@ -248,6 +312,21 @@ Route::prefix('agent')->group(function () {
         Route::post('/devices/detected', [DeviceDetectionController::class, 'store']);
         Route::post('/tasks/claim',      [AgentTaskController::class, 'claim']);
         Route::post('/tasks/{id}/report', [AgentTaskController::class, 'report']);
+    });
+
+    /*
+     * Canal de monitoreo, con cubo propio.
+     *
+     * El `throttle:180,1` de arriba se llavea por IP, así que todos los agentes
+     * tras el mismo NAT comparten cuota. El monitoreo empuja lotes con una
+     * cadencia distinta y no puede comerse la cuota del aprovisionamiento ni al
+     * revés: `agent-monitoring` se llavea por agente (ver DeviceServiceProvider).
+     */
+    Route::middleware(['agent.hmac', 'throttle:agent-monitoring'])->group(function () {
+        Route::get('/monitoring/targets',  [MonitoringController::class, 'targets']);
+        Route::post('/monitoring/samples', [MonitoringController::class, 'samples']);
+        Route::get('/monitoring/scans',    [MonitoringController::class, 'scans']);
+        Route::post('/monitoring/scans/{id}/report', [MonitoringController::class, 'reportScan']);
     });
 });
 

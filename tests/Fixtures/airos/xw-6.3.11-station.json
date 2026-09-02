@@ -1,0 +1,27 @@
+{
+  "host": {
+    "hostname": "Enlace-TorreNorte-STA",
+    "uptime": 1857600,
+    "fwversion": "XW.v6.3.11",
+    "devmodel": "NanoStation M5",
+    "cpuload": 12.5,
+    "totalram": 65011712,
+    "freeram": 21327872
+  },
+  "wireless": {
+    "essid": "ENLACE-NORTE",
+    "mode": "sta",
+    "apmac": "24:A4:3C:11:22:33",
+    "frequency": "5805 MHz",
+    "chanbw": 20,
+    "txpower": 22,
+    "signal": -67,
+    "rssi": 45,
+    "noisef": -95,
+    "ccq": 950,
+    "txrate": 130,
+    "rxrate": 117,
+    "distance": 4200,
+    "count": 0
+  }
+}
