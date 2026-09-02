@@ -8,6 +8,7 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Request;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -18,6 +19,30 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
+        /*
+         * La aplicación solo es alcanzable a través del proxy de Coolify, que a
+         * su vez está detrás de Cloudflare. Sin declararlo, Laravel ignora las
+         * cabeceras `X-Forwarded-*` y eso rompía dos cosas de forma silenciosa:
+         *
+         *  - Veía cada petición como `http`, así que `hasValidSignature()`
+         *    reconstruía una URL distinta de la firmada (que sale de APP_URL,
+         *    en `https`) y toda URL firmada se rechazaba con un 403.
+         *  - Tomaba como IP de origen la del proxy, de modo que los límites de
+         *    `throttle` —pensados por cliente— los compartía todo el mundo en un
+         *    único cubo.
+         *
+         * Se confía en cualquier proxy porque el contenedor no está expuesto
+         * directamente: solo recibe tráfico que ya ha pasado por Traefik. No se
+         * incluye `X-Forwarded-Host` a propósito: el host real llega igualmente
+         * en la cabecera `Host` y así no hay forma de inyectar otro.
+         */
+        $middleware->trustProxies(
+            at: '*',
+            headers: Request::HEADER_X_FORWARDED_FOR
+                | Request::HEADER_X_FORWARDED_PORT
+                | Request::HEADER_X_FORWARDED_PROTO,
+        );
+
         /*
          * Por defecto Laravel intenta redirigir a `route('login')` cuando un
          * invitado toca una ruta protegida. Esta app es solo API —no existe tal

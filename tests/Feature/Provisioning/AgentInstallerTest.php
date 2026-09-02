@@ -140,6 +140,31 @@ it('el token nunca viaja en la URL', function () {
     expect($url)->not->toContain($m[1]);
 });
 
+it('acepta la URL firmada cuando la petición llega por un proxy https', function () {
+    /*
+     * La regresión que esto cubre solo se manifiesta en producción: el proxy
+     * habla `http` con el contenedor y anuncia el esquema original en una
+     * cabecera. Si Laravel no confía en ella reconstruye la URL como `http`,
+     * que no es sobre la que se firmó, y rechaza con 403 toda URL firmada.
+     *
+     * Por eso se firma en `https` y después se devuelve el generador a `http`:
+     * si no, el cliente de pruebas construiría la petición ya como `https` y el
+     * caso pasaría igual sin el arreglo, que es justo lo que no queremos.
+     */
+    $agent = agenteDePrueba('vpn_host');
+
+    URL::forceRootUrl('https://proxy.test');
+    URL::forceScheme('https');
+    $url = URL::temporarySignedRoute('agent.installer', now()->addMinutes(30), ['id' => $agent->id]);
+    expect($url)->toStartWith('https://');
+
+    URL::forceRootUrl('http://proxy.test');
+    URL::forceScheme('http');
+    $ruta = parse_url($url, PHP_URL_PATH) . '?' . parse_url($url, PHP_URL_QUERY);
+
+    $this->get($ruta, ['X-Forwarded-Proto' => 'https'])->assertOk();
+});
+
 it('el panel entrega la orden de instalación al crear un agente', function () {
     Sanctum::actingAs(makeSuperAdminEmployee(), ['*']);
 
