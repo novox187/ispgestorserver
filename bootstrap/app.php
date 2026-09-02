@@ -18,6 +18,18 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
+        /*
+         * Por defecto Laravel intenta redirigir a `route('login')` cuando un
+         * invitado toca una ruta protegida. Esta app es solo API —no existe tal
+         * ruta— así que ese intento de construir la URL lanzaba su propia
+         * `RouteNotFoundException` ANTES de que se llegara a construir la
+         * `AuthenticationException`, tapando el 401 real con un 500 genérico.
+         * `redirectGuestsTo(null)` desactiva el intento de redirección: el
+         * middleware `Authenticate` pasa a lanzar la excepción sin URL de
+         * destino, que el handler de abajo convierte en un 401 limpio.
+         */
+        $middleware->redirectGuestsTo(fn () => null);
+
         // CORS debe correr primero para responder los preflight OPTIONS
         // antes de que cualquier otro middleware (auth, throttle) los rechace
         $middleware->prepend(\Illuminate\Http\Middleware\HandleCors::class);
@@ -32,6 +44,23 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
+        /*
+         * Esta aplicación es solo API: no existe ninguna ruta nombrada `login`
+         * (routes/web.php solo sirve la vista de bienvenida por defecto de
+         * Laravel). Sin este handler, cualquier petición sin token válido a una
+         * ruta protegida hace que el comportamiento por defecto de Laravel
+         * intente redirigir a `route('login')`, que no existe, y esa segunda
+         * excepción (`RouteNotFoundException`) tapa por completo el 401 real
+         * que debía responderse — el cliente recibe un 500 genérico en vez de
+         * un 401 con el que pueda decidir mostrar el login.
+         */
+        $exceptions->render(function (
+            \Illuminate\Auth\AuthenticationException $e,
+            \Illuminate\Http\Request $request
+        ) {
+            return response()->json(['message' => 'No autenticado.'], 401);
+        });
+
         // Garantiza que TODAS las respuestas de error incluyan cabeceras CORS,
         // incluso cuando una excepción escapa al middleware HandleCors (errores fatales,
         // timeouts de PHP, fallos en el handler de excepciones, etc.).
