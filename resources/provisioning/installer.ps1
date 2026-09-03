@@ -148,6 +148,9 @@ if (Test-Path $destinoModulo) { Remove-Item -Recurse -Force $destinoModulo }
 New-Item -ItemType Directory -Force -Path $Prefix | Out-Null
 Copy-Item -Recurse -Force (Join-Path $SrcDir 'ispgestor_agent') $Prefix
 Copy-Item -Force (Join-Path $SrcDir 'requirements.txt') $Prefix
+# El desinstalador se deja puesto desde el principio: quien quiera quitar el
+# agente no tiene por qué saber qué tareas y carpetas se crearon.
+Copy-Item -Force (Join-Path $SrcDir 'uninstall.ps1') $Prefix
 
 Info 'Preparando el entorno virtual.'
 $venv = Join-Path $Prefix 'venv'
@@ -301,6 +304,7 @@ if ($estado -eq 'Running') {
     Write-Host ''
     Write-Host "   Ver el estado:  Get-ScheduledTask -TaskName $tarea"
     Write-Host "   Detenerlo:      Stop-ScheduledTask -TaskName $tarea"
+    Write-Host "   Desinstalar:    & '$Prefix\uninstall.ps1'"
 } else {
     Write-Host ''
     Rojo "El servicio no quedó corriendo (estado: $estado). Mira qué pasó ejecutándolo a mano:"

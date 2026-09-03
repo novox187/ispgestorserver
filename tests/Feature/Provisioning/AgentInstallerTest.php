@@ -210,7 +210,43 @@ it('el paquete lleva la capa de servicio y el plist de launchd', function () {
     @unlink($tmp);
 
     expect($nombres)->toContain('ispgestor-agent-service')
-        ->toContain('uk.ironlink.ispgestor-agent.plist');
+        ->toContain('uk.ironlink.ispgestor-agent.plist')
+        // Sin desinstalador, quien probó el agente tiene que adivinar cuáles de
+        // los seis ficheros repartidos por /opt, /etc y /usr/local hay que
+        // borrar, y lo normal es dejarse alguno con el secreto dentro.
+        ->toContain('uninstall.sh')
+        ->toContain('uninstall.ps1');
+});
+
+it('el instalador dice cómo desinstalar al terminar', function () {
+    // Quien instala esto para probarlo va a querer quitarlo, y son seis ficheros
+    // repartidos por /opt, /etc y /usr/local que no tiene por qué adivinar.
+    // Decirlo solo en la documentación es no decirlo.
+    $unix = $this->get(urlInstalador(agenteDePrueba()))->getContent();
+    $windows = $this->get(urlInstalador(agenteDePrueba('provisioner'), 30, 'windows'))->getContent();
+
+    expect($unix)->toContain('sudo ispgestor-agent-uninstall');
+    expect($windows)->toContain('uninstall.ps1');
+});
+
+it('el instalador de Unix deja puesto el desinstalador', function () {
+    // No basta con que viaje en el paquete: hay que instalarlo, porque el
+    // paquete se descomprime en un temporal que el instalador borra al salir.
+    // La comprobación va contra el `install.sh` de dentro del ZIP, que es quien
+    // lo copia a /usr/local/bin.
+    $script = $this->get(urlInstalador(agenteDePrueba()))->getContent();
+
+    preg_match("/<<'PAYLOAD_B64'[^\\n]*\\n(.*?)\\nPAYLOAD_B64/s", $script, $m);
+    $tmp = tempnam(sys_get_temp_dir(), 'zip');
+    file_put_contents($tmp, base64_decode(preg_replace('/\s+/', '', $m[1] ?? ''), true));
+
+    $zip = new ZipArchive();
+    $zip->open($tmp);
+    $instalador = (string) $zip->getFromName('install.sh');
+    $zip->close();
+    @unlink($tmp);
+
+    expect($instalador)->toContain('/usr/local/bin/ispgestor-agent-uninstall');
 });
 
 it('las unidades no exigen rutas que solo existen en el hosting', function () {

@@ -116,6 +116,11 @@ chmod 755 /usr/local/bin/ispgestor-agent
 # mismo script en Linux y en macOS.
 install -m 755 "${SOURCE_DIR}/ispgestor-agent-service" /usr/local/bin/ispgestor-agent-service
 
+# El desinstalador se deja puesto desde el principio: son seis ficheros
+# repartidos por /opt, /etc y /usr/local más el enlace de arranque, y quien
+# quiera quitarlo no tiene por qué saber cuáles son.
+install -m 755 "${SOURCE_DIR}/uninstall.sh" /usr/local/bin/ispgestor-agent-uninstall
+
 cat <<'EOF'
 
 Instalación completada.

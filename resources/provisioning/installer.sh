@@ -289,6 +289,10 @@ if ispgestor-agent-service is-active "$INSTANCIA"; then
     echo "   Ya debería aparecer en línea en el panel, en Red → Agentes."
     echo
     echo "   Ver el registro:  $(ispgestor-agent-service log-hint "$INSTANCIA")"
+    # Se dice al terminar y no solo en la documentación: quien instala esto para
+    # probarlo va a querer quitarlo, y son seis ficheros repartidos por /opt,
+    # /etc y /usr/local que no tiene por qué adivinar.
+    echo "   Desinstalar:      sudo ispgestor-agent-uninstall"
 else
     echo
     rojo "El servicio no quedó activo. Mira qué pasó con:"

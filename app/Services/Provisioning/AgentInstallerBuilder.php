@@ -41,6 +41,12 @@ class AgentInstallerBuilder
     private const INCLUIR = [
         'ispgestor_agent',
         'install.sh',
+        // Instalar limpiamente sin poder desinstalar limpiamente deja a quien
+        // probó el agente adivinando qué ficheros se tocaron —seis, repartidos
+        // por /opt, /etc y /usr/local— y lo normal es dejarse alguno, con el
+        // secreto dentro.
+        'uninstall.sh',
+        'uninstall.ps1',
         // Capa que traduce «arranca esto» a systemd o a launchd, para que el
         // instalador desatendido sea el mismo script en Linux y en macOS.
         'ispgestor-agent-service',
