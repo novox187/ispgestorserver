@@ -21,8 +21,18 @@ class NetworkScanFinding extends Model
 {
     public const UPDATED_AT = null;
 
+    /** Lo vio el barrido UDP del agente: responde el protocolo de Ubiquiti. */
+    public const SOURCE_SWEEP = 'sweep';
+
+    /** Salió de la tabla de vecinos de un router: habla MNDP, CDP o LLDP. */
+    public const SOURCE_NEIGHBOR = 'neighbor';
+
+    /** Lo vieron las dos. Es la señal más fuerte de que el equipo está vivo. */
+    public const SOURCE_BOTH = 'both';
+
     protected $fillable = [
         'scan_id',
+        'source',
         'mac_address',
         'ip_address',
         'vendor',
@@ -31,6 +41,8 @@ class NetworkScanFinding extends Model
         'hostname',
         'essid',
         'matched_device_id',
+        'discovered_via_device_id',
+        'remote_interface',
     ];
 
     protected $casts = [
@@ -46,6 +58,18 @@ class NetworkScanFinding extends Model
     public function matchedDevice(): BelongsTo
     {
         return $this->belongsTo(NetworkDevice::class, 'matched_device_id');
+    }
+
+    /**
+     * Equipo cuya tabla de vecinos reportó este hallazgo.
+     *
+     * Es el otro extremo del enlace: si un router ve a la antena, es que están
+     * conectados. Por eso al dar de alta el hallazgo el enlace del mapa se
+     * puede registrar solo, sin preguntarle al operador a qué está conectado.
+     */
+    public function discoveredVia(): BelongsTo
+    {
+        return $this->belongsTo(NetworkDevice::class, 'discovered_via_device_id');
     }
 
     public function isKnown(): bool

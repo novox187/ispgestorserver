@@ -101,6 +101,19 @@ class Client extends Authenticatable
     }
 
     /**
+     * Equipos de red instalados en casa del abonado (su CPE y, si lo hay, el
+     * router detrás).
+     *
+     * Son varios a propósito: `clients.ip` solo puede apuntar a uno, y sigue
+     * existiendo porque de ella depende la sincronización de colas que factura.
+     * Esta relación es la que responde «¿qué hay montado en su tejado?».
+     */
+    public function networkDevices(): HasMany
+    {
+        return $this->hasMany(NetworkDevice::class);
+    }
+
+    /**
      * Ventanas de corte del servicio (histórico + vigente).
      */
     public function serviceInterruptions(): HasMany

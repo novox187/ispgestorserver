@@ -88,6 +88,7 @@ class NetworkDevice extends Model
         'gateway',
         'provisioning_source',
         'site_id',
+        'client_id',
         'credential_profile_id',
         'agent_id',
         'is_monitored',
@@ -200,6 +201,18 @@ class NetworkDevice extends Model
     public function links(): HasMany
     {
         return $this->hasMany(NetworkLink::class, 'a_device_id');
+    }
+
+    /**
+     * Abonado al que pertenece el equipo. Null en la infraestructura.
+     *
+     * Es lo que separa el CPE del tejado de un cliente de la antena sectorial
+     * de la torre: los dos son equipos y se sondean igual, pero solo del
+     * primero tiene sentido preguntar «¿de quién es?» cuando algo se cae.
+     */
+    public function client(): BelongsTo
+    {
+        return $this->belongsTo(Client::class, 'client_id');
     }
 
     public function credentialProfile(): BelongsTo

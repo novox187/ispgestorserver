@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Agent;
 use App\Enums\AgentRole;
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\AuthenticateProvisioningAgent;
+use App\Jobs\EnrichScanWithNeighborsJob;
 use App\Models\DeviceMetricSample;
 use App\Enums\DeviceVendor;
 use App\Models\NetworkDevice;
@@ -480,6 +481,16 @@ class MonitoringController extends Controller
             'error_code'    => $validated['error_code']    ?? null,
             'error_message' => $validated['error_message'] ?? null,
         ]);
+
+        // El barrido del agente solo ve equipos airOS: los MikroTik hablan MNDP,
+        // que no cruza un enlace enrutado. La otra mitad del parque sale de las
+        // tablas de vecinos de los routers, y esa consulta la hace el servidor.
+        //
+        // Va en cola porque puede tardar segundos por router y el agente está
+        // esperando esta respuesta para seguir su vuelta. Se dispara también en
+        // caso de fallo: si el agente rechazó el rango, la tabla de vecinos es
+        // lo único que le queda al operador.
+        EnrichScanWithNeighborsJob::dispatch($scan->id);
 
         return response()->json(['data' => ['stored' => $guardados]]);
     }

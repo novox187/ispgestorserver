@@ -2,10 +2,12 @@
 
 use App\Enums\DeviceRole;
 use App\Enums\DeviceVendor;
+use App\Jobs\EnrichScanWithNeighborsJob;
 use App\Models\NetworkDevice;
 use App\Models\NetworkScan;
 use App\Models\NetworkScanFinding;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 
 uses(RefreshDatabase::class);
 
@@ -226,6 +228,37 @@ it('reconoce los OUI del parque real de Ubiquiti y MikroTik', function () {
         ->and($vendor('10.10.10.247'))->toBe('ubiquiti')
         ->and($vendor('10.10.10.252'))->toBe('mikrotik')
         ->and($vendor('10.10.10.1'))->toBe('mikrotik');
+});
+
+it('encola el completado con vecinos al cerrar el barrido', function () {
+    // El barrido del agente solo ve airOS. La otra mitad del parque sale de la
+    // tabla de vecinos del router, y esa consulta la hace el servidor.
+    Queue::fake();
+
+    pedirBarrido();
+    $scan = NetworkScan::first();
+
+    reportarBarrido($this->agent, $scan->id, ['status' => 'completed', 'findings' => []])->assertOk();
+
+    Queue::assertPushed(
+        EnrichScanWithNeighborsJob::class,
+        fn (EnrichScanWithNeighborsJob $job) => $job->scanId === $scan->id,
+    );
+});
+
+it('encola el completado con vecinos incluso si el barrido falló', function () {
+    // El caso típico es que el agente rechace el rango por no estar en su lista
+    // blanca. Entonces la tabla de vecinos es lo único que le queda al operador.
+    Queue::fake();
+
+    pedirBarrido();
+    $scan = NetworkScan::first();
+
+    reportarBarrido($this->agent, $scan->id, [
+        'status' => 'failed', 'error_code' => 'CIDR_NOT_ALLOWED',
+    ])->assertOk();
+
+    Queue::assertPushed(EnrichScanWithNeighborsJob::class);
 });
 
 // ── Adopción ─────────────────────────────────────────────────────────────────

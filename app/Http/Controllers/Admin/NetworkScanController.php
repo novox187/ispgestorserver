@@ -7,12 +7,15 @@ use App\Enums\DeviceRole;
 use App\Enums\DeviceVendor;
 use App\Http\Controllers\Controller;
 use App\Models\NetworkDevice;
+use App\Models\NetworkLink;
 use App\Models\NetworkScan;
 use App\Models\NetworkScanFinding;
 use App\Models\ProvisioningAgent;
+use App\Services\Devices\ClientMatcher;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
 /**
@@ -83,25 +86,45 @@ class NetworkScanController extends Controller
         return response()->json(['data' => $this->mapScan($scan->fresh(['agent', 'requester']))], 201);
     }
 
-    public function show(int $id): JsonResponse
+    public function show(int $id, ClientMatcher $matcher): JsonResponse
     {
-        $scan = NetworkScan::with(['agent:id,name', 'requester:id,nombre', 'findings.matchedDevice:id,name'])
+        $scan = NetworkScan::with([
+            'agent:id,name',
+            'requester:id,nombre',
+            'findings.matchedDevice:id,name',
+            'findings.discoveredVia:id,name',
+        ])
             ->withCount('findings')
             ->findOrFail($id);
 
         return response()->json(['data' => array_merge($this->mapScan($scan), [
-            'findings' => $scan->findings->map(fn (NetworkScanFinding $f) => [
-                'id'            => $f->id,
-                'ip_address'    => $f->ip_address,
-                'mac_address'   => $f->mac_address,
-                'vendor'        => $f->vendor,
-                'model'         => $f->model,
-                'firmware'      => $f->firmware,
-                'hostname'      => $f->hostname,
-                'essid'         => $f->essid,
-                'known'         => $f->isKnown(),
-                'known_as'      => $f->matchedDevice?->name,
-            ])->all(),
+            'findings' => $scan->findings->map(function (NetworkScanFinding $f) use ($matcher) {
+                // La sugerencia se calcula al leer y no se guarda: un cliente
+                // dado de alta después del barrido debe aparecer propuesto sin
+                // tener que repetirlo.
+                $cliente = $matcher->suggest($f);
+
+                return [
+                    'id'            => $f->id,
+                    'source'        => $f->source,
+                    'ip_address'    => $f->ip_address,
+                    'mac_address'   => $f->mac_address,
+                    'vendor'        => $f->vendor,
+                    'model'         => $f->model,
+                    'firmware'      => $f->firmware,
+                    'hostname'      => $f->hostname,
+                    'essid'         => $f->essid,
+                    'known'         => $f->isKnown(),
+                    'known_as'      => $f->matchedDevice?->name,
+                    // De quién es vecino: el otro extremo del enlace del mapa.
+                    'discovered_via'           => $f->discoveredVia?->name,
+                    'discovered_via_device_id' => $f->discovered_via_device_id,
+                    'remote_interface'         => $f->remote_interface,
+                    'suggested_client_id'      => $cliente['client_id']   ?? null,
+                    'suggested_client_name'    => $cliente['client_name'] ?? null,
+                    'suggested_client_reason'  => $cliente['reason']      ?? null,
+                ];
+            })->all(),
         ])]);
     }
 
@@ -132,14 +155,29 @@ class NetworkScanController extends Controller
             'password' => ['nullable', 'string', 'max:255'],
             'credential_profile_id' => ['nullable', 'integer', 'exists:device_credentials,id'],
             'agent_id' => ['nullable', 'integer', 'exists:provisioning_agents,id'],
+            // El abonado dueño del equipo. Solo tiene sentido en un CPE: una
+            // antena sectorial de la torre no es «de» nadie.
+            'client_id' => ['nullable', 'integer', 'exists:clients,id'],
         ]);
+
+        $rol = DeviceRole::from($validated['role']);
+
+        if (isset($validated['client_id']) && $rol !== DeviceRole::CPE) {
+            return response()->json([
+                'error' => [
+                    'code'    => 'CLIENT_ONLY_ON_CPE',
+                    'message' => 'Solo un equipo de abonado (CPE) puede vincularse a un cliente. '
+                        . 'La infraestructura compartida no pertenece a un cliente concreto.',
+                ],
+            ], 422);
+        }
 
         $vendor = DeviceVendor::tryFrom((string) $finding->vendor) ?? DeviceVendor::UBIQUITI;
 
         $device = NetworkDevice::create([
             'name'        => $validated['name'],
             'vendor'      => $vendor,
-            'role'        => $validated['role'],
+            'role'        => $rol,
             'driver'      => $vendor->defaultDriver(),
             'host'        => $finding->ip_address,
             'mac_address' => $finding->mac_address,
@@ -148,6 +186,7 @@ class NetworkScanController extends Controller
             'username'    => $validated['username'] ?? null,
             'password'    => $validated['password'] ?? null,
             'credential_profile_id' => $validated['credential_profile_id'] ?? null,
+            'client_id'   => $validated['client_id'] ?? null,
             // Por defecto lo sondea el mismo agente que lo encontró: es el que
             // demostró alcanzarlo.
             'agent_id'    => $validated['agent_id'] ?? $finding->scan->agent_id,
@@ -158,7 +197,77 @@ class NetworkScanController extends Controller
 
         $finding->update(['matched_device_id' => $device->id]);
 
-        return response()->json(['data' => ['device_id' => $device->id]], 201);
+        return response()->json(['data' => [
+            'device_id' => $device->id,
+            'link_id'   => $this->registrarEnlace($finding, $device)?->id,
+            'ip_warning' => $this->avisoDeIpDiscordante($device),
+        ]], 201);
+    }
+
+    /**
+     * Registra el enlace con el equipo que reportó este hallazgo.
+     *
+     * Se hace solo, sin preguntar: si el hallazgo salió de la tabla de vecinos
+     * de un router, ese router **es** el otro extremo del enlace —eso es lo que
+     * significa ser vecino—. Pedirle al operador que lo indique a mano sería
+     * pedirle que teclee un dato que el sistema ya tiene.
+     *
+     * Los hallazgos que solo vio el barrido UDP no llevan este dato y no
+     * generan enlace: el mapa lo completará después el descubrimiento de
+     * topología, que corre periódicamente.
+     */
+    private function registrarEnlace(NetworkScanFinding $finding, NetworkDevice $device): ?NetworkLink
+    {
+        if ($finding->discovered_via_device_id === null) {
+            return null;
+        }
+
+        try {
+            return NetworkLink::record(
+                $finding->discovered_via_device_id,
+                $device->id,
+                'neighbor',
+                array_filter([
+                    'type'        => 'utp',
+                    'a_interface' => $finding->remote_interface,
+                ]),
+            );
+        } catch (\Throwable $e) {
+            // Un enlace que no se puede registrar no invalida el alta: el equipo
+            // ya está en el inventario y el mapa se rehace periódicamente.
+            Log::warning('NetworkScanController: no se pudo registrar el enlace del alta.', [
+                'finding_id' => $finding->id,
+                'device_id'  => $device->id,
+                'error'      => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    /**
+     * Avisa cuando la IP del equipo no coincide con la que tiene el cliente.
+     *
+     * `clients.ip` es la dirección con la que la sincronización de colas cobra a
+     * ese abonado. Si el equipo que se acaba de vincular responde en otra, hay
+     * dos verdades y una de las dos está mal. No se corrige sola —tocar esa
+     * columna es tocar la facturación— pero callarlo dejaría el problema latente
+     * hasta que alguien no pudiera cortar el servicio a quien no paga.
+     */
+    private function avisoDeIpDiscordante(NetworkDevice $device): ?string
+    {
+        $cliente = $device->client;
+
+        if ($cliente === null || !$cliente->ip || $cliente->ip === '0.0.0.0') {
+            return null;
+        }
+
+        if ($cliente->ip === $device->host) {
+            return null;
+        }
+
+        return "El equipo responde en {$device->host} pero la ficha de «{$cliente->full_name}» "
+            . "tiene {$cliente->ip}, que es la IP con la que se le factura. Revisa cuál es la buena.";
     }
 
     public function destroy(int $id): JsonResponse
