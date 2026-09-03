@@ -432,7 +432,11 @@ class MonitoringController extends Controller
             'findings.*.ip_address'   => ['required', 'ip'],
             'findings.*.mac_address'  => ['nullable', 'string', 'max:32'],
             'findings.*.model'        => ['nullable', 'string', 'max:60'],
-            'findings.*.firmware'     => ['nullable', 'string', 'max:40'],
+            // 80 y no 40: las versiones de airOS llevan plataforma, chipset,
+            // compilación y fecha —«XW.ar934x.v6.1.7-licensed.32555.180523.1625»
+            // son 43— y con el límite anterior se perdía el barrido ENTERO por
+            // unas pocas antenas, porque el 422 rechaza el informe completo.
+            'findings.*.firmware'     => ['nullable', 'string', 'max:80'],
             'findings.*.hostname'     => ['nullable', 'string', 'max:100'],
             'findings.*.essid'        => ['nullable', 'string', 'max:64'],
             'error_code'              => ['nullable', 'string', 'max:60'],

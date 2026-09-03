@@ -160,6 +160,46 @@ class TestParse:
         assert d.hostname is not None
 
 
+class TestToFinding:
+    def test_acota_los_textos_para_no_perder_el_barrido(self):
+        # El informe va en una sola petición: un campo demasiado largo la
+        # rechaza entera y se van al traste los demás equipos. Pasó con cuatro
+        # antenas cuyo firmware traía «-licensed».
+        d = parse(
+            trama(
+                tlv(0x01, MAC),
+                tlv(0x03, b"X" * 200),
+                tlv(0x0B, b"N" * 200),
+                tlv(0x14, b"M" * 200),
+                tlv(0x0D, b"E" * 200),
+            ),
+            source_ip="10.10.10.5",
+        )
+
+        finding = d.to_finding()
+
+        assert len(finding["firmware"]) == 80
+        assert len(finding["hostname"]) == 100
+        assert len(finding["model"]) == 60
+        assert len(finding["essid"]) == 64
+
+    def test_el_firmware_real_mas_largo_cabe_entero(self):
+        # 43 caracteres: es el que rompía el límite anterior de 40.
+        firmware = b"XW.ar934x.v6.1.7-licensed.32555.180523.1625"
+
+        d = parse(trama(tlv(0x01, MAC), tlv(0x03, firmware)), source_ip="10.10.10.5")
+
+        assert d.to_finding()["firmware"] == firmware.decode()
+
+    def test_los_campos_ausentes_siguen_siendo_nulos(self):
+        d = parse(trama(tlv(0x01, MAC)), source_ip="10.10.10.5")
+
+        finding = d.to_finding()
+
+        assert finding["firmware"] is None
+        assert finding["hostname"] is None
+
+
 class TestListaBlanca:
     def test_permite_un_rango_contenido(self):
         assert cidr_is_allowed("192.168.1.0/24", ["192.168.0.0/16"])

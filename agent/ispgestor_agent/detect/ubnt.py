@@ -65,16 +65,27 @@ class UbntDevice:
     uptime_seconds: int | None = None
 
     def to_finding(self) -> dict:
+        """Lo que se le manda al servidor, con los textos ya acotados.
+
+        Se recorta aquí, aunque el servidor también valide, porque el informe de
+        un barrido va en una sola petición: **un único campo demasiado largo la
+        rechaza entera y se pierden los demás equipos**, y el agente no reencola.
+        Pasó de verdad con cuatro antenas cuyo firmware traía «-licensed» y se
+        fue al traste un barrido de 25.
+
+        Un nombre recortado se lee igual de bien en la lista; un barrido perdido
+        no se recupera.
+        """
         return {
             "ip_address": self.ip_address,
-            "mac_address": self.mac_address,
-            "firmware": self.firmware,
-            "hostname": self.hostname,
+            "mac_address": _acotar(self.mac_address, 32),
+            "firmware": _acotar(self.firmware, 80),
+            "hostname": _acotar(self.hostname, 100),
             # `model` es el nombre comercial (NanoStation M5) y `platform` el
             # interno; se prefiere el primero porque es el que reconoce quien
             # está mirando la lista.
-            "model": self.model or self.platform,
-            "essid": self.essid,
+            "model": _acotar(self.model or self.platform, 60),
+            "essid": _acotar(self.essid, 64),
         }
 
 
@@ -269,6 +280,10 @@ def cidr_is_allowed(cidr: str, allowed: list[str]) -> bool:
             continue
 
     return False
+
+
+def _acotar(value: str | None, limite: int) -> str | None:
+    return value[:limite] if value is not None else None
 
 
 def _mac(value: bytes) -> str:

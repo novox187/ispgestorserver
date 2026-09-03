@@ -173,6 +173,34 @@ it('registra el rechazo del agente cuando el rango no está en su lista blanca',
         ->and($scan->fresh()->error_code)->toBe('CIDR_NOT_ALLOWED');
 });
 
+it('acepta el firmware largo de airOS sin tirar el barrido entero', function () {
+    // El límite era de 40 caracteres, elegido mirando versiones de RouterOS
+    // ("7.20.6"). Las de airOS llevan plataforma, chipset, compilación y fecha.
+    // En el primer barrido real, cuatro antenas «-licensed» hicieron que el
+    // servidor rechazara el informe COMPLETO con un 422: se perdieron los 25
+    // equipos, porque el agente no reencola y el barrido quedó colgado.
+    $firmware = 'XW.ar934x.v6.1.7-licensed.32555.180523.1625';
+    expect(strlen($firmware))->toBeGreaterThan(40);
+
+    pedirBarrido();
+    $scan = NetworkScan::first();
+
+    reportarBarrido($this->agent, $scan->id, [
+        'status'   => 'completed',
+        'findings' => [
+            ['ip_address' => '10.10.10.18', 'mac_address' => '74:83:C2:A6:BB:EC',
+             'model' => 'LiteBeam M5', 'firmware' => $firmware, 'hostname' => 'DOMINGO GREFA'],
+            ['ip_address' => '10.10.10.250', 'mac_address' => 'FC:EC:DA:6C:90:51',
+             'model' => 'NanoBeam 5AC', 'firmware' => 'WA.ar934x.v8.7.22.48486.260227.1959'],
+        ],
+    ])->assertOk();
+
+    expect($scan->fresh()->status)->toBe(NetworkScan::STATUS_COMPLETED)
+        ->and(NetworkScanFinding::count())->toBe(2)
+        // Y se guarda entero, no recortado a la mitad.
+        ->and(NetworkScanFinding::where('ip_address', '10.10.10.18')->value('firmware'))->toBe($firmware);
+});
+
 // ── Adopción ─────────────────────────────────────────────────────────────────
 
 it('convierte un hallazgo en un equipo del inventario', function () {
