@@ -9,6 +9,8 @@ use App\Services\Devices\DeviceDriver;
 use App\Services\Devices\Dto\DeviceTelemetry;
 use App\Services\Devices\Dto\ProbeResult;
 use App\Services\Devices\Dto\RadioTelemetry;
+use GuzzleHttp\Cookie\CookieJar;
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 use Throwable;
 
@@ -46,6 +48,9 @@ use Throwable;
  */
 class AirOsDriver implements DeviceDriver
 {
+    private const SESSION_COOKIE = 'AIROS_SESSIONID';
+    private const STATUS_PATH    = '/status.cgi';
+
     public function vendor(): string
     {
         return DeviceVendor::UBIQUITI->value;
@@ -262,6 +267,31 @@ class AirOsDriver implements DeviceDriver
     /**
      * Autentica contra `/login.cgi` y lee `/status.cgi`.
      *
+     * ## El login de airOS no crea la sesión: valida una que ya existe
+     *
+     * Son tres peticiones y no dos, y el orden no es negociable. `login.cgi` no
+     * emite una sesión nueva al autenticar: marca como válida la que el cliente
+     * ya trae. El navegador la tiene porque al abrir la antena hizo un GET antes
+     * de ver el formulario. Un cliente que va directo al POST no lleva ninguna,
+     * así que no hay nada que validar y el equipo contesta sin `Set-Cookie` —
+     * indistinguible, desde fuera, de una contraseña incorrecta.
+     *
+     * El formulario del propio equipo declara `enctype="multipart/form-data"` y
+     * su CGI parsea eso: un `application/x-www-form-urlencoded` llega con el
+     * cuerpo que el firmware no sabe leer y el resultado es el mismo silencio.
+     *
+     * El bote de cookies se comparte entre las tres peticiones en vez de copiar
+     * la cabecera a mano, porque hay firmwares que **sí** rotan la sesión al
+     * autenticar. Con el bote, las dos familias funcionan sin distinguirlas.
+     *
+     * ## Cómo se sabe que salió bien
+     *
+     * Por lo que devuelve `status.cgi`, no por la cookie. Ante una sesión sin
+     * autenticar airOS no responde 401: devuelve un 200 con el HTML del
+     * formulario de acceso, o un 302 de vuelta a él. Fiarse del código de estado
+     * daría por bueno un login fallido y el error saldría después, al parsear,
+     * como «respuesta que no entiendo».
+     *
      * El certificado no se verifica porque es autofirmado por el propio equipo:
      * exigir una cadena válida haría imposible hablar con cualquier antena del
      * parque. La confidencialidad la aporta estar dentro de la red de gestión.
@@ -272,33 +302,56 @@ class AirOsDriver implements DeviceDriver
     {
         $credentials = $device->resolvedCredentials();
         $base        = $this->baseUrl($device);
+        $jar         = new CookieJar();
 
-        $login = Http::withoutVerifying()
-            ->timeout($timeout)
-            ->asForm()
-            ->withOptions(['allow_redirects' => false])
-            ->post("{$base}/login.cgi", [
-                'username' => (string) $credentials['username'],
-                'password' => (string) $credentials['password'],
-            ]);
+        // 1. Sembrar la sesión que el POST vendrá a validar.
+        $semilla = $this->request($jar, $timeout)->get("{$base}/login.cgi");
 
-        $cookies = $login->cookies();
-        $session = $cookies?->getCookieByName('AIROS_SESSIONID')?->getValue();
-
-        if ($session === null) {
-            throw new \RuntimeException('airOS rechazó las credenciales o no devolvió sesión.');
+        if ($jar->getCookieByName(self::SESSION_COOKIE) === null) {
+            throw new \RuntimeException(
+                "El equipo no abrió sesión en login.cgi (HTTP {$semilla->status()}); "
+                . '¿es una antena airOS y es ese el puerto de su interfaz web?'
+            );
         }
 
-        $status = Http::withoutVerifying()
-            ->timeout($timeout)
-            ->withHeaders(['Cookie' => "AIROS_SESSIONID={$session}"])
-            ->get("{$base}/status.cgi");
+        // 2. Autenticar. `uri` es el campo oculto que lleva el formulario del
+        //    equipo; hay firmwares que rechazan el POST si falta.
+        $this->request($jar, $timeout)->asMultipart()->post("{$base}/login.cgi", [
+            'username' => (string) $credentials['username'],
+            'password' => (string) $credentials['password'],
+            'uri'      => self::STATUS_PATH,
+        ]);
+
+        // 3. Leer, que es lo único que dice de verdad si la sesión vale.
+        $status = $this->request($jar, $timeout)->get("{$base}" . self::STATUS_PATH);
+
+        if ($status->redirect()) {
+            throw new \RuntimeException('airOS devolvió al formulario de acceso: usuario o contraseña incorrectos.');
+        }
 
         if (!$status->successful()) {
             throw new \RuntimeException("status.cgi devolvió HTTP {$status->status()}.");
         }
 
+        if (!str_starts_with(ltrim($status->body()), '{')) {
+            throw new \RuntimeException('airOS devolvió el formulario de acceso: usuario o contraseña incorrectos.');
+        }
+
         return $status->json() ?? [];
+    }
+
+    /**
+     * Petición con el bote de cookies compartido y sin seguir redirecciones.
+     *
+     * Las redirecciones se cortan a propósito: el 302 hacia `login.cgi` es
+     * precisamente la señal de que la sesión no vale, y seguirlo la borraría
+     * devolviendo un 200 con el formulario.
+     */
+    private function request(CookieJar $jar, int $timeout): PendingRequest
+    {
+        return Http::withoutVerifying()
+            ->timeout($timeout)
+            ->withOptions(['cookies' => $jar, 'allow_redirects' => false]);
     }
 
     private function baseUrl(NetworkDevice $device): string
