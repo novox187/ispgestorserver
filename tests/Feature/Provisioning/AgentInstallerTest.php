@@ -122,6 +122,50 @@ it('el instalador de Windows protege el secreto con SID y no con nombres', funct
         ->toContain('S-1-5-18');
 });
 
+it('el script de Windows está estructuralmente entero', function () {
+    // El equivalente del `bash -n` de la plantilla de Unix, pero más flojo: sin
+    // PowerShell no se puede analizar de verdad. Aun así atrapa lo que suele
+    // romperse al editar la plantilla a mano —una llave sin cerrar, el
+    // here-string mal terminado, un marcador sin sustituir— y eso solo se vería
+    // al ejecutarla en la máquina del cliente.
+    $script = $this->get(urlInstalador(agenteDePrueba('provisioner'), 30, 'windows'))->getContent();
+
+    // Ningún marcador se quedó sin sustituir.
+    expect($script)->not->toMatch('/\{\{[A-Z_]+\}\}/');
+
+    // El here-string que envuelve el paquete abre y cierra. Si no, PowerShell
+    // se come el resto del script como si fuera texto.
+    expect(substr_count($script, "@'\n"))->toBe(1)
+        ->and(substr_count($script, "\n'@"))->toBe(1);
+
+    // Llaves y paréntesis equilibrados fuera del bloque del paquete, que es
+    // base64 y no contiene ninguno de los dos.
+    $codigo = preg_replace("/@'\n.*?\n'@/s", "''", $script);
+
+    expect(substr_count($codigo, '{'))->toBe(substr_count($codigo, '}'))
+        ->and(substr_count($codigo, '('))->toBe(substr_count($codigo, ')'));
+});
+
+it('PowerShell analiza el script sin errores', function () {
+    // La comprobación de verdad, cuando hay con qué hacerla.
+    $script = $this->get(urlInstalador(agenteDePrueba('provisioner'), 30, 'windows'))->getContent();
+
+    $ruta = tempnam(sys_get_temp_dir(), 'instalador') . '.ps1';
+    file_put_contents($ruta, $script);
+
+    $guion = '$e = $null; '
+        . '[void][System.Management.Automation.Language.Parser]::ParseFile('
+        . escapeshellarg($ruta) . ', [ref]$null, [ref]$e); '
+        . 'if ($e.Count -gt 0) { $e | ForEach-Object { $_.Message }; exit 1 }';
+
+    $salida = [];
+    $codigo = 0;
+    exec('pwsh -NoProfile -Command ' . escapeshellarg($guion) . ' 2>&1', $salida, $codigo);
+    @unlink($ruta);
+
+    expect($codigo)->toBe(0, "PowerShell rechazó el script:\n" . implode("\n", $salida));
+})->skip(fn () => trim((string) shell_exec('command -v pwsh')) === '', 'Sin PowerShell en este entorno.');
+
 it('sin plataforma sigue entregando el script de Unix', function () {
     // Compatibilidad: los enlaces ya generados no llevan el parámetro.
     $script = $this->get(urlInstalador(agenteDePrueba('provisioner')))->getContent();
