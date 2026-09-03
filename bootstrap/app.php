@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\AuthenticateProvisioningAgent;
+use App\Http\Middleware\ConfirmPassword;
 use App\Http\Middleware\EnsureEmployeeSuperAdmin;
 use App\Http\Middleware\EnsurePrimaryRouter;
 use App\Http\Middleware\CheckPermission;
@@ -63,6 +64,11 @@ return Application::configure(basePath: dirname(__DIR__))
             'super_admin'      => EnsureEmployeeSuperAdmin::class,
             'permission'       => CheckPermission::class,
             'primary_router'   => EnsurePrimaryRouter::class,
+            // Acciones que rompen algo y cuesta deshacer: se exige volver a
+            // teclear la contraseña. Un aviso en el panel frena el clic
+            // accidental; esto frena además a quien se encuentre una sesión
+            // abierta.
+            'confirm_password' => ConfirmPassword::class,
             // Canal máquina-a-máquina de los agentes de aprovisionamiento.
             // No usa Sanctum: sus tokens están atados a un usuario y no caducan.
             'agent.hmac'       => AuthenticateProvisioningAgent::class,

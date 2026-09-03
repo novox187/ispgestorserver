@@ -6,6 +6,7 @@ use App\Enums\AgentRole;
 use App\Http\Controllers\Controller;
 use App\Models\ProvisioningAgent;
 use App\Services\Provisioning\ProvisioningAuditor;
+use App\Support\PasswordConfirmation;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\URL;
@@ -103,10 +104,23 @@ class ProvisioningAgentController extends Controller
         $validated = $request->validate([
             'name'      => ['sometimes', 'string', 'max:100'],
             'is_active' => ['sometimes', 'boolean'],
+            'password'  => ['sometimes', 'string'],
         ]);
 
         $wasActive = $agent->is_active;
-        $agent->update($validated);
+        $desactivando = $wasActive && array_key_exists('is_active', $validated) && !$validated['is_active'];
+
+        // Renombrar es inofensivo y no debería costar teclear la contraseña.
+        // Desactivar corta el acceso del agente en la siguiente petición, así
+        // que ahí sí se confirma. Reactivarlo tampoco la pide: devuelve el
+        // servicio en vez de quitarlo.
+        if ($desactivando) {
+            if ($error = PasswordConfirmation::check($request)) {
+                return $error;
+            }
+        }
+
+        $agent->update(collect($validated)->except('password')->all());
 
         if ($wasActive && $agent->is_active === false) {
             $this->auditor->agent($agent, ProvisioningAuditor::AGENT_REVOKED, [

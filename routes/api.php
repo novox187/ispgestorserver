@@ -191,12 +191,17 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
             ->middleware('permission:mikrotik.ver');
         Route::post('/agents', [AdminProvisioningAgentController::class, 'store'])
             ->middleware('super_admin');
+        // Regenerar y eliminar dejan al agente fuera hasta que alguien vuelva a
+        // instalarlo en la máquina donde vive, que puede estar en la oficina de
+        // un cliente. Se exige reconfirmar la contraseña.
         Route::post('/agents/{id}/regenerate-token', [AdminProvisioningAgentController::class, 'regenerateToken'])
-            ->middleware('super_admin');
+            ->middleware(['super_admin', 'confirm_password']);
+        // `update` también renombra, que es inofensivo: la contraseña se exige
+        // dentro, solo cuando lo que se pide es desactivarlo.
         Route::put('/agents/{id}', [AdminProvisioningAgentController::class, 'update'])
             ->middleware('super_admin');
         Route::delete('/agents/{id}', [AdminProvisioningAgentController::class, 'destroy'])
-            ->middleware('super_admin');
+            ->middleware(['super_admin', 'confirm_password']);
     });
 
     // ISPs
