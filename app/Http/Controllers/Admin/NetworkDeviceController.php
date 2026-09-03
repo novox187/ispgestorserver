@@ -6,6 +6,7 @@ use App\Enums\DeviceRole;
 use App\Enums\DeviceVendor;
 use App\Http\Controllers\Controller;
 use App\Models\NetworkDevice;
+use App\Services\Devices\ConnectivityRecorder;
 use App\Services\Devices\DeviceCapability;
 use App\Services\Devices\DeviceDriverRegistry;
 use Illuminate\Http\JsonResponse;
@@ -27,8 +28,10 @@ use Illuminate\Validation\Rule;
  */
 class NetworkDeviceController extends Controller
 {
-    public function __construct(private readonly DeviceDriverRegistry $drivers)
-    {
+    public function __construct(
+        private readonly DeviceDriverRegistry $drivers,
+        private readonly ConnectivityRecorder $connectivity,
+    ) {
     }
 
     public function index(Request $request): JsonResponse
@@ -127,6 +130,20 @@ class NetworkDeviceController extends Controller
      * siguiente, por una alerta, de que tecleó mal la contraseña. Solo funciona
      * si el servidor alcanza al equipo; cuando no, lo dirá el primer ciclo del
      * agente.
+     *
+     * ## Por qué un sondeo bueno se guarda y uno malo no
+     *
+     * Cuando responde, el equipo **está** vivo: no hay lectura alternativa de
+     * una antena que acaba de entregar su telemetría, así que se anota y la
+     * ficha deja de decir «Desconectado» delante de quien acaba de ver lo
+     * contrario. Antes esa evidencia se tiraba y el rojo seguía ahí hasta el
+     * siguiente ciclo del monitor.
+     *
+     * Cuando no responde, no se toca nada. Este botón se pulsa sobre todo
+     * mientras se ajustan credenciales, y un intento fallido a propósito no
+     * debería empujar al equipo hacia una alerta de caída. Decidir que algo está
+     * caído es del monitor periódico, que para eso tiene un umbral de fallos
+     * seguidos.
      */
     public function test(int $id): JsonResponse
     {
@@ -144,11 +161,18 @@ class NetworkDeviceController extends Controller
 
         $result = $driver->probe($device, 8);
 
+        if ($result->ok) {
+            $this->connectivity->recordUp($device, $result);
+        }
+
         return response()->json(['data' => [
             'ok'       => $result->ok,
             'error'    => $result->error,
             'model'    => $result->model,
             'firmware' => $result->firmware,
+            // Para que el panel pueda pintar el estado nuevo sin volver a pedir
+            // la lista entera.
+            'connectivity_status' => $device->fresh()?->connectivity_status,
         ]]);
     }
 

@@ -7,7 +7,7 @@ use App\Models\NetworkDevice;
 use App\Models\ProvisioningAgent;
 use App\Notifications\Core\Facades\Notify;
 use App\Notifications\Messages\MikrotikDisconnectedNotification;
-use App\Notifications\Messages\MikrotikRecoveredNotification;
+use App\Services\Devices\ConnectivityRecorder;
 use App\Services\Devices\DeviceCapability;
 use App\Services\Devices\DeviceDriver;
 use App\Services\Devices\DeviceDriverRegistry;
@@ -200,51 +200,14 @@ class MonitorDeviceConnectivityJob implements ShouldQueue
         int $threshold,
         int $timeoutSeconds,
     ): void {
-        $result = $driver->probe($device, $timeoutSeconds);
-        $now    = now();
+        $result   = $driver->probe($device, $timeoutSeconds);
+        $recorder = app(ConnectivityRecorder::class);
 
-        if ($result->ok) {
-            $wasDisconnected    = $device->connectivity_status === 'disconnected';
-            $lastDisconnectedAt = $device->last_disconnected_at;
-
-            $device->forceFill(array_merge([
-                'connectivity_status'  => 'connected',
-                'last_health_check_at' => $now,
-                'last_connected_at'    => $now,
-                'consecutive_failures' => 0,
-            // El sondeo ya habló con el equipo, así que de paso se corrige el
-            // inventario: modelo y firmware cambian sin que nadie lo teclee.
-            ], $result->inventoryUpdates()))->save();
-
-            if ($wasDisconnected) {
-                Notify::dispatch(MikrotikRecoveredNotification::build($device, $lastDisconnectedAt));
-            }
-
-            return;
-        }
-
-        $newFailures = ((int) $device->consecutive_failures) + 1;
-        $device->forceFill([
-            'last_health_check_at' => $now,
-            'consecutive_failures' => $newFailures,
-        ])->save();
-
-        if ($newFailures < $threshold) {
-            return;
-        }
-
-        // Umbral alcanzado: marcar como desconectado (si no lo estaba ya) y notificar.
-        if ($device->connectivity_status !== 'disconnected') {
-            $device->forceFill([
-                'connectivity_status'  => 'disconnected',
-                'last_disconnected_at' => $now,
-            ])->save();
-        }
-
-        Notify::dispatch(MikrotikDisconnectedNotification::build(
-            router:          $device->refresh(),
-            errorDetail:     (string) ($result->error ?? 'unknown'),
-            lastConnectedAt: $device->last_connected_at,
-        ));
+        // Anotar el resultado es lo mismo lo haga este ciclo o el botón de
+        // «probar credenciales» del panel, así que vive en un sitio compartido.
+        // La política de alertado —el umbral— se queda aquí, que es de quien es.
+        $result->ok
+            ? $recorder->recordUp($device, $result)
+            : $recorder->recordDown($device, $result, $threshold);
     }
 }
