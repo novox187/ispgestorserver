@@ -83,6 +83,16 @@ class AirOsError(RuntimeError):
         super().__init__(f"[{code}] {message}")
 
 
+# Nivel de seguridad de OpenSSL para hablar con las antenas.
+#
+# Estas llevan una década en la torre y su TLS es de entonces: negocian
+# Diffie-Hellman con claves de 1024 bits, que OpenSSL 3 rechaza de plano en su
+# nivel por defecto —«dh key too small», sin llegar a hablar—. El nivel 1 es el
+# mínimo que hace falta; se comprobó contra el parque real que bajar a 0 no
+# aporta nada.
+CIPHERS = "DEFAULT@SECLEVEL=1"
+
+
 def _insecure_context() -> ssl.SSLContext:
     """Contexto TLS que no verifica el certificado.
 
@@ -90,10 +100,22 @@ def _insecure_context() -> ssl.SSLContext:
     restablecer de fábrica. Exigir una cadena válida haría imposible hablar con
     cualquier equipo del parque; la confidencialidad la aporta estar dentro de
     la red de gestión.
+
+    El contexto es propio de esta sesión, así que relajar el nivel de seguridad
+    no afecta a nada más de lo que haga el agente.
     """
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
+
+    try:
+        ctx.set_ciphers(CIPHERS)
+    except ssl.SSLError:
+        # La sintaxis `@SECLEVEL` es de OpenSSL; en una compilación que use otra
+        # biblioteca no existe. Se sigue sin ella: las antenas modernas hablan
+        # igual, y las viejas darán un error de TLS que dice lo que pasa.
+        log.warning("Esta instalación de Python no admite %s; el firmware viejo puede fallar.", CIPHERS)
+
     return ctx
 
 

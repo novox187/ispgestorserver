@@ -59,6 +59,9 @@ class AirOsDriver implements DeviceDriver
     private const SESSION_PREFIX = 'AIROS_';
     private const STATUS_PATH    = '/status.cgi';
 
+    /** Ver `request()`: sin esto, el firmware viejo del parque ni saluda. */
+    private const CIPHERS = 'DEFAULT@SECLEVEL=1';
+
     public function vendor(): string
     {
         return DeviceVendor::UBIQUITI->value;
@@ -374,12 +377,30 @@ class AirOsDriver implements DeviceDriver
      * Las redirecciones se cortan a propósito: el 302 hacia `login.cgi` es
      * precisamente la señal de que la sesión no vale, y seguirlo la borraría
      * devolviendo un 200 con el formulario.
+     *
+     * ## Por qué se baja el nivel de seguridad de OpenSSL
+     *
+     * Estas antenas llevan una década en la torre y su TLS es de entonces:
+     * negocian Diffie-Hellman con claves de 1024 bits, que OpenSSL 3 rechaza de
+     * plano en su nivel por defecto —`dh key too small`, sin llegar a hablar—.
+     * Una LiteBeam M5 con airOS 6.2.0 del parque falla exactamente así.
+     *
+     * El nivel 1 es el mínimo que hace falta: admite esas claves y sigue
+     * excluyendo lo que ya no vale nada. Se comprobó que el 0 no aporta nada.
+     *
+     * Y se aplica **solo aquí**, en las peticiones a las antenas: bajarlo
+     * globalmente debilitaría también el TLS con el que la aplicación habla con
+     * servicios de internet, que no tienen ninguna excusa para ir flojos.
      */
     private function request(CookieJar $jar, int $timeout): PendingRequest
     {
         return Http::withoutVerifying()
             ->timeout($timeout)
-            ->withOptions(['cookies' => $jar, 'allow_redirects' => false]);
+            ->withOptions([
+                'cookies'         => $jar,
+                'allow_redirects' => false,
+                'curl'            => [CURLOPT_SSL_CIPHER_LIST => self::CIPHERS],
+            ]);
     }
 
     private function baseUrl(NetworkDevice $device): string

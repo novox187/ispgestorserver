@@ -10,6 +10,8 @@ use App\Services\Devices\Dto\DeviceTelemetry;
 use App\Services\Devices\Dto\NeighborLink;
 use App\Services\Devices\Dto\ProbeResult;
 use App\Services\MikrotikHealthChecker;
+use RouterOS\Exceptions\BadCredentialsException;
+use RouterOS\Exceptions\ConnectException;
 use Throwable;
 
 /**
@@ -55,7 +57,7 @@ class RouterOsDriver implements DeviceDriver
         try {
             $resource = $this->checker->resources($device, $timeoutSeconds);
         } catch (Throwable $e) {
-            return ProbeResult::down($e->getMessage());
+            return ProbeResult::down($this->explicar($e, $device));
         }
 
         return ProbeResult::up(
@@ -70,10 +72,35 @@ class RouterOsDriver implements DeviceDriver
         try {
             $resource = $this->checker->resources($device, $timeoutSeconds);
         } catch (Throwable $e) {
-            return DeviceTelemetry::unreachable($e->getMessage());
+            return DeviceTelemetry::unreachable($this->explicar($e, $device));
         }
 
         return $this->normalize($resource);
+    }
+
+    /**
+     * Traduce el fallo a algo sobre lo que se pueda actuar.
+     *
+     * La biblioteca de RouterOS dice «Unable to establish socket session,
+     * Operation timed out», que es cierto y no sirve de nada: no distingue un
+     * equipo apagado de una IP que ya es de otro, ni de un servicio API sin
+     * habilitar —que en un CPE de abonado viene desactivado de fábrica y es la
+     * causa más frecuente—.
+     *
+     * Se apoya en los tipos de excepción y no en el texto, que cambia con la
+     * versión de la biblioteca y con el idioma del sistema.
+     */
+    private function explicar(Throwable $e, NetworkDevice $device): string
+    {
+        $destino = $device->host . ':' . ($device->port ?: 8728);
+
+        return match (true) {
+            $e instanceof BadCredentialsException => 'RouterOS rechazó el usuario o la contraseña.',
+            $e instanceof ConnectException => "No hay respuesta en {$destino}. Comprueba que el equipo "
+                . 'esté encendido y en esa IP, y que tenga habilitado el servicio API '
+                . '(IP → Services → api); en los equipos de abonado suele venir desactivado.',
+            default => $e->getMessage(),
+        };
     }
 
     /**

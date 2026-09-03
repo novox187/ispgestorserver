@@ -4,6 +4,7 @@ use App\Enums\DeviceRole;
 use App\Enums\DeviceVendor;
 use App\Models\NetworkDevice;
 use App\Services\Devices\Drivers\AirOsDriver;
+use GuzzleHttp\Cookie\CookieJar;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 
@@ -131,6 +132,31 @@ it('avisa cuando el equipo ni siquiera abre sesión', function () {
 
     expect(app(AirOsDriver::class)->telemetry(antenaDePrueba())->error)
         ->toContain('no abrió sesión');
+});
+
+// ── El TLS del firmware viejo ────────────────────────────────────────────────
+
+it('baja el nivel de OpenSSL para que el firmware viejo pueda saludar', function () {
+    // Una LiteBeam M5 con airOS 6.2.0 negocia Diffie-Hellman con 1024 bits y
+    // OpenSSL 3 la corta antes de hablar: «dh key too small». El nivel 1 es el
+    // mínimo que lo admite; comprobado contra el parque real que el 0 no aporta.
+    //
+    // La antena de mentira habla por HTTP simulado y nunca ejercitaría esto, así
+    // que lo que se vigila es el cableado: que la opción llegue a cURL. Es justo
+    // lo que se pierde en silencio al reordenar el método, y solo se notaría en
+    // la torre, sobre el firmware que nadie tiene delante.
+    $peticion = (function () {
+        $metodo = new ReflectionMethod(AirOsDriver::class, 'request');
+        $metodo->setAccessible(true);
+
+        return $metodo->invoke(app(AirOsDriver::class), new CookieJar(), 8);
+    })();
+
+    $opciones = new ReflectionProperty($peticion, 'options');
+    $opciones->setAccessible(true);
+
+    expect($opciones->getValue($peticion)['curl'][CURLOPT_SSL_CIPHER_LIST] ?? null)
+        ->toBe('DEFAULT@SECLEVEL=1');
 });
 
 // ── El sondeo, que es lo que ve el operador ──────────────────────────────────
