@@ -52,6 +52,14 @@ function airOsFalso(bool $aceptaCredenciales = true, bool $abreSesion = true): v
         }
 
         if ($ruta === '/login.cgi') {
+            // airOS 8 rechaza con un 400 el multipart que generan los clientes
+            // modernos, y el rastro que deja es un 403 en `status.cgi`, que
+            // despista. Se reproduce para que volver a mandarlo no pase
+            // inadvertido.
+            if (str_contains((string) $request->header('Content-Type')[0], 'multipart/form-data')) {
+                return Http::response('<html>Bad Request</html>', 400);
+            }
+
             // El firmware responde 302 tanto al login bueno como al malo; la
             // diferencia solo se ve al pedir `status.cgi`.
             return Http::response('', 302, ['Location' => '/index.cgi']);
@@ -90,19 +98,21 @@ it('no da por hecho un nombre de cookie: el real lleva la MAC dentro', function 
     expect(app(AirOsDriver::class)->telemetry(antenaDePrueba())->reachable)->toBeTrue();
 });
 
-it('manda el formulario como multipart, igual que el equipo', function () {
+it('manda el formulario urlencoded, no como declara el equipo', function () {
+    // Al revés de lo que sugiere el `enctype` del formulario de la antena: el
+    // multipart lo rechaza airOS 8 con un 400 —que luego se ve como un 403 en
+    // `status.cgi`— y el urlencoded lo aceptan las dos generaciones del parque.
     airOsFalso();
 
     app(AirOsDriver::class)->telemetry(antenaDePrueba());
 
     $login = collect(Http::recorded())->first(fn ($par) => $par[0]->method() === 'POST')[0];
 
-    expect($login->header('Content-Type')[0])->toContain('multipart/form-data')
-        ->and($login->body())->toContain('name="username"')
-        ->and($login->body())->toContain('ubnt')
-        ->and($login->body())->toContain('secreto')
+    expect($login->header('Content-Type')[0])->toContain('application/x-www-form-urlencoded')
+        ->and($login->body())->toContain('username=ubnt')
+        ->and($login->body())->toContain('password=secreto')
         // Campo oculto que lleva el formulario del propio equipo.
-        ->and($login->body())->toContain('name="uri"');
+        ->and($login->body())->toContain('uri=');
 });
 
 // ── Qué se lee del resultado ─────────────────────────────────────────────────

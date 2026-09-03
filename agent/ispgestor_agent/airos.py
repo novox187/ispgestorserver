@@ -23,9 +23,9 @@ from __future__ import annotations
 import http.cookiejar
 import json
 import logging
-import secrets
 import ssl
 import urllib.error
+import urllib.parse
 import urllib.request
 
 log = logging.getLogger("ispgestor.airos")
@@ -39,28 +39,21 @@ STATUS_PATH = "/status.cgi"
 SESSION_PREFIX = "AIROS_"
 
 
-def _multipart(campos: dict[str, str]) -> tuple[bytes, str]:
-    """Codifica un formulario como `multipart/form-data`.
+def _formulario(campos: dict[str, str]) -> tuple[bytes, str]:
+    """Codifica el formulario de acceso.
 
-    Es lo que declara el formulario de acceso del propio equipo. Su CGI también
-    acepta urlencoded —comprobado contra un airOS 6.3.6—, así que esto no es lo
-    que hace que el login funcione; se manda como lo manda el equipo por no
-    depender de una tolerancia que otro firmware podría no tener.
+    Urlencoded y no multipart, aunque el formulario del equipo declare
+    `multipart/form-data`: es al revés de lo que parece. El httpd de airOS 8
+    rechaza con un 400 el multipart que generan los clientes HTTP modernos,
+    mientras que el urlencoded lo aceptan las dos generaciones del parque.
 
-    La frontera es aleatoria, así que ningún valor puede contenerla y cerrar una
-    parte antes de tiempo.
+    El 400 no se ve: lo que aparece después es un 403 en `status.cgi`, que
+    despista, porque parece un problema de permisos y es un cuerpo que el
+    servidor no supo leer.
     """
-    frontera = f"----ispgestor{secrets.token_hex(16)}"
-    partes: list[str] = []
+    cuerpo = urllib.parse.urlencode(campos).encode("utf-8")
 
-    for nombre, valor in campos.items():
-        partes.append(f"--{frontera}\r\n")
-        partes.append(f'Content-Disposition: form-data; name="{nombre}"\r\n\r\n')
-        partes.append(f"{valor}\r\n")
-
-    partes.append(f"--{frontera}--\r\n")
-
-    return "".join(partes).encode("utf-8"), f"multipart/form-data; boundary={frontera}"
+    return cuerpo, "application/x-www-form-urlencoded"
 
 
 class _SinRedirecciones(urllib.request.HTTPRedirectHandler):
@@ -209,7 +202,7 @@ class AirOsSession:
 
         # 2. Autenticar. `uri` es el campo oculto que lleva el formulario del
         #    propio equipo; hay firmwares que rechazan el POST si falta.
-        cuerpo, content_type = _multipart({
+        cuerpo, content_type = _formulario({
             "username": self.username,
             "password": self.password,
             "uri": STATUS_PATH,

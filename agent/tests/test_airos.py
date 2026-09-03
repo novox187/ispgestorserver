@@ -20,6 +20,7 @@ Lo que reproduce la antena de mentira, y que es lo que hace el firmware:
 import json
 import sys
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -89,13 +90,18 @@ class AntenaFalsa(BaseHTTPRequestHandler):
         cuerpo = self.rfile.read(int(self.headers.get("Content-Length") or 0))
         sesion = self._sesion()
 
+        # airOS 8 rechaza el multipart de los clientes modernos con un 400, y el
+        # rastro que deja es un 403 en status.cgi, que despista. Se reproduce
+        # aquí para que volver a mandarlo no pase inadvertido.
+        if self.headers.get("Content-Type", "").startswith("multipart/form-data"):
+            return self._responder(400, b"<html>Bad Request</html>")
+
         # Solo se puede validar una sesión que ya exista. Si no hay semilla no se
         # autentica nada — pero la respuesta es un 302 igual, que es la trampa:
         # parece que el acceso fue bien.
-        texto = cuerpo.decode("utf-8", "replace")
+        campos = urllib.parse.parse_qs(cuerpo.decode("utf-8", "replace"))
         credenciales_ok = (
-            f'name="username"\r\n\r\n{USUARIO}' in texto
-            and f'name="password"\r\n\r\n{CLAVE}' in texto
+            campos.get("username") == [USUARIO] and campos.get("password") == [CLAVE]
         )
 
         if sesion in AntenaFalsa.sembradas and credenciales_ok:
@@ -154,12 +160,13 @@ class TestAcceso:
             ("GET", "/status.cgi"),
         ]
 
-    def test_manda_el_formulario_como_multipart(self, antena):
-        # No porque el equipo rechace urlencoded —lo acepta— sino porque es lo
-        # que declara su propio formulario y no depende de esa tolerancia.
+    def test_manda_el_formulario_urlencoded(self, antena):
+        # Al revés de lo que sugiere el `enctype` del formulario del equipo: el
+        # multipart lo rechaza airOS 8 con un 400 y el urlencoded lo aceptan las
+        # dos generaciones.
         sesion(antena).status()
 
-        assert AntenaFalsa.tipos_recibidos[0].startswith("multipart/form-data")
+        assert AntenaFalsa.tipos_recibidos[0].startswith("application/x-www-form-urlencoded")
 
     def test_no_supone_un_nombre_fijo_de_cookie(self, antena):
         # La antena de mentira usa el nombre real, que lleva la MAC dentro. Un

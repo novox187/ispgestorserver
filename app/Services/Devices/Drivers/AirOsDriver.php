@@ -292,11 +292,17 @@ class AirOsDriver implements DeviceDriver
      * NanoStation loco M5 con airOS 6.3.6: sin semilla, `status.cgi` devuelve
      * 302; con semilla, 200 y el JSON.
      *
-     * El cuerpo va en `multipart/form-data` porque es lo que declara el
-     * formulario del propio equipo. El CGI también acepta urlencoded —también
-     * comprobado—, así que esto no es lo que arregla nada; se manda como lo
-     * manda el equipo por no depender de una tolerancia que otro firmware
-     * podría no tener.
+     * El cuerpo va **urlencoded** aunque el formulario del equipo declare
+     * `multipart/form-data`, y es al revés de lo que parece: el multipart que
+     * construye Guzzle lo rechaza airOS 8 con un 400, mientras que el
+     * urlencoded lo aceptan las dos generaciones. Medido sobre el parque:
+     *
+     *     .233 (airOS 8)  multipart POST=400  |  form POST=302 y JSON
+     *     .247 (airOS 8)  multipart POST=400  |  form POST=302 y JSON
+     *     .236 (airOS 6)  multipart POST=302  |  form POST=302 y JSON
+     *
+     * El 400 se ve luego como un 403 en `status.cgi`, que despista: parece un
+     * problema de permisos y es un cuerpo que el httpd no supo leer.
      *
      * El bote de cookies se comparte entre las tres peticiones en vez de copiar
      * la cabecera a mano. Eso importa más de lo que parece: el nombre de la
@@ -335,7 +341,7 @@ class AirOsDriver implements DeviceDriver
 
         // 2. Autenticar. `uri` es el campo oculto que lleva el formulario del
         //    equipo; hay firmwares que rechazan el POST si falta.
-        $this->request($jar, $timeout)->asMultipart()->post("{$base}/login.cgi", [
+        $this->request($jar, $timeout)->asForm()->post("{$base}/login.cgi", [
             'username' => (string) $credentials['username'],
             'password' => (string) $credentials['password'],
             'uri'      => self::STATUS_PATH,
