@@ -32,15 +32,20 @@ log = logging.getLogger("ispgestor.airos")
 
 LOGIN_PATH = "/login.cgi"
 STATUS_PATH = "/status.cgi"
-SESSION_COOKIE = "AIROS_SESSIONID"
+
+# La cookie de sesión no tiene un nombre fijo: airOS la llama `AIROS_` seguido
+# de la MAC del propio equipo sin separadores —`AIROS_FCECDA2C91C1`—, así que
+# cambia en cada antena. Buscar un nombre concreto no encuentra nunca nada.
+SESSION_PREFIX = "AIROS_"
 
 
 def _multipart(campos: dict[str, str]) -> tuple[bytes, str]:
     """Codifica un formulario como `multipart/form-data`.
 
-    A mano y no con `urlencode` porque el formulario de acceso de airOS declara
-    `enctype="multipart/form-data"` y su CGI parsea eso: un cuerpo urlencoded
-    llega y se descarta en silencio, sin error, y el login queda sin efecto.
+    Es lo que declara el formulario de acceso del propio equipo. Su CGI también
+    acepta urlencoded —comprobado contra un airOS 6.3.6—, así que esto no es lo
+    que hace que el login funcione; se manda como lo manda el equipo por no
+    depender de una tolerancia que otro firmware podría no tener.
 
     La frontera es aleatoria, así que ningún valor puede contenerla y cerrar una
     parte antes de tiempo.
@@ -56,6 +61,19 @@ def _multipart(campos: dict[str, str]) -> tuple[bytes, str]:
     partes.append(f"--{frontera}--\r\n")
 
     return "".join(partes).encode("utf-8"), f"multipart/form-data; boundary={frontera}"
+
+
+class _SinRedirecciones(urllib.request.HTTPRedirectHandler):
+    """El 302 de airOS es información, no un desvío que haya que seguir.
+
+    Seguir el de `login.cgi` descarga la página de inicio entera para nada, y
+    seguir el de `status.cgi` convertiría la señal de «esta sesión no vale» en
+    un 200 con el formulario, que es justo lo que hay que distinguir. El httpd
+    de estas antenas es monohilo: cada petición de más cuenta.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 class AirOsError(RuntimeError):
@@ -97,6 +115,7 @@ class AirOsSession:
         self._opener = urllib.request.build_opener(
             urllib.request.HTTPSHandler(context=self._ssl),
             urllib.request.HTTPCookieProcessor(self._jar),
+            _SinRedirecciones(),
         )
         self._authenticated = False
 
@@ -146,9 +165,11 @@ class AirOsSession:
         Son dos peticiones y el orden no es negociable: `login.cgi` **no emite
         una sesión al autenticar, valida la que el cliente ya trae**. El
         navegador la tiene porque al abrir la antena hizo un GET antes de ver el
-        formulario; un cliente que va directo al POST no lleva ninguna, así que
-        no hay nada que validar y el equipo responde sin cookie — indistinguible
-        desde fuera de una contraseña incorrecta.
+        formulario; un cliente que va directo al POST no lleva ninguna.
+
+        Y lo peor: sin la semilla el POST responde **302, como si hubiera
+        funcionado**. Es `status.cgi` quien luego rechaza la sesión. Comprobado
+        contra una NanoStation loco M5 con airOS 6.3.6.
         """
         self._jar.clear()
 
@@ -203,7 +224,8 @@ class AirOsSession:
             raise AirOsError("AIROS_UNREACHABLE", f"Fallo de red hacia {self.host}: {exc}") from exc
 
     def _tiene_sesion(self) -> bool:
-        return any(cookie.name == SESSION_COOKIE for cookie in self._jar)
+        """¿Abrió el equipo una sesión, se llame como se llame?"""
+        return any(cookie.name.startswith(SESSION_PREFIX) for cookie in self._jar)
 
     def _get(self, path: str) -> dict:
         respuesta = self._abrir(
@@ -216,6 +238,10 @@ class AirOsSession:
         )
 
         codigo = getattr(respuesta, "code", None) or getattr(respuesta, "status", 200)
+
+        # Una sesión que no vale se manifiesta como un desvío al formulario.
+        if codigo in (301, 302, 303, 307, 308):
+            raise AirOsError("AIROS_SESSION_EXPIRED", "El equipo desvió al formulario de acceso.")
 
         if codigo in (401, 403):
             raise AirOsError(

@@ -48,7 +48,15 @@ use Throwable;
  */
 class AirOsDriver implements DeviceDriver
 {
-    private const SESSION_COOKIE = 'AIROS_SESSIONID';
+    /**
+     * Prefijo del nombre de la cookie de sesión.
+     *
+     * No es un nombre fijo: airOS la llama `AIROS_` seguido de la MAC del
+     * propio equipo sin separadores —`AIROS_FCECDA2C91C1`—, así que cambia en
+     * cada antena. Buscar un nombre concreto, que es lo que hacía esto, no
+     * encuentra nunca nada.
+     */
+    private const SESSION_PREFIX = 'AIROS_';
     private const STATUS_PATH    = '/status.cgi';
 
     public function vendor(): string
@@ -276,13 +284,21 @@ class AirOsDriver implements DeviceDriver
      * así que no hay nada que validar y el equipo contesta sin `Set-Cookie` —
      * indistinguible, desde fuera, de una contraseña incorrecta.
      *
-     * El formulario del propio equipo declara `enctype="multipart/form-data"` y
-     * su CGI parsea eso: un `application/x-www-form-urlencoded` llega con el
-     * cuerpo que el firmware no sabe leer y el resultado es el mismo silencio.
+     * Sin la semilla el POST responde **302, como si hubiera funcionado**, y es
+     * `status.cgi` quien luego rechaza la sesión. Comprobado contra una
+     * NanoStation loco M5 con airOS 6.3.6: sin semilla, `status.cgi` devuelve
+     * 302; con semilla, 200 y el JSON.
+     *
+     * El cuerpo va en `multipart/form-data` porque es lo que declara el
+     * formulario del propio equipo. El CGI también acepta urlencoded —también
+     * comprobado—, así que esto no es lo que arregla nada; se manda como lo
+     * manda el equipo por no depender de una tolerancia que otro firmware
+     * podría no tener.
      *
      * El bote de cookies se comparte entre las tres peticiones en vez de copiar
-     * la cabecera a mano, porque hay firmwares que **sí** rotan la sesión al
-     * autenticar. Con el bote, las dos familias funcionan sin distinguirlas.
+     * la cabecera a mano. Eso importa más de lo que parece: el nombre de la
+     * cookie lleva dentro la MAC del equipo, así que no hay un nombre que
+     * copiar.
      *
      * ## Cómo se sabe que salió bien
      *
@@ -307,7 +323,7 @@ class AirOsDriver implements DeviceDriver
         // 1. Sembrar la sesión que el POST vendrá a validar.
         $semilla = $this->request($jar, $timeout)->get("{$base}/login.cgi");
 
-        if ($jar->getCookieByName(self::SESSION_COOKIE) === null) {
+        if (!$this->tieneSesion($jar)) {
             throw new \RuntimeException(
                 "El equipo no abrió sesión en login.cgi (HTTP {$semilla->status()}); "
                 . '¿es una antena airOS y es ese el puerto de su interfaz web?'
@@ -338,6 +354,18 @@ class AirOsDriver implements DeviceDriver
         }
 
         return $status->json() ?? [];
+    }
+
+    /** ¿Abrió el equipo una sesión, se llame como se llame? */
+    private function tieneSesion(CookieJar $jar): bool
+    {
+        foreach ($jar->toArray() as $cookie) {
+            if (str_starts_with((string) ($cookie['Name'] ?? ''), self::SESSION_PREFIX)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

@@ -12,15 +12,17 @@ uses(RefreshDatabase::class);
 /**
  * El protocolo de acceso de airOS.
  *
- * `login.cgi` **no emite una sesión al autenticar: valida la que el cliente ya
- * trae**. El navegador la tiene porque al abrir la antena hizo un GET antes de
- * ver el formulario; un cliente que va directo al POST no lleva ninguna, así
- * que no hay nada que validar y el equipo responde sin cookie.
+ * Dos cosas, las dos comprobadas contra una NanoStation loco M5 con airOS
+ * 6.3.6, que entre las dos dejaron el parque entero sin poder sondearse:
  *
- * Eso, más que el formulario venga en `multipart/form-data` y no urlencoded,
- * dejó el parque entero sin poder sondearse: todas las antenas daban «rechazó
- * las credenciales» con credenciales buenas, verificadas a mano en la web del
- * propio equipo.
+ * 1. **La cookie de sesión no tiene un nombre fijo.** Se llama `AIROS_` más la
+ *    MAC del equipo sin separadores. Buscar `AIROS_SESSIONID`, que es lo que
+ *    hacía esto, no encuentra nunca nada.
+ * 2. **`login.cgi` no emite la sesión: valida la que el cliente ya trae.** El
+ *    navegador la tiene porque al abrir la antena hizo un GET antes de ver el
+ *    formulario. Y el POST responde **302 igual, haya funcionado o no**, así
+ *    que sin la semilla parece que todo fue bien y es `status.cgi` quien lo
+ *    desmiente con otro 302.
  */
 function antenaDePrueba(array $overrides = []): NetworkDevice
 {
@@ -41,21 +43,23 @@ function airOsFalso(bool $aceptaCredenciales = true, bool $abreSesion = true): v
         $ruta = parse_url($request->url(), PHP_URL_PATH);
 
         if ($ruta === '/login.cgi' && $request->method() === 'GET') {
+            // El nombre real lleva dentro la MAC del equipo. Si el driver
+            // buscara uno fijo, no encontraría esta.
             return Http::response($formulario, 200, $abreSesion
-                ? ['Set-Cookie' => 'AIROS_SESSIONID=semilla123; path=/']
+                ? ['Set-Cookie' => 'AIROS_FCECDA2C91C1=8df9ead2ea819391b4ba53b1879c8432; Path=/; Version=1']
                 : []);
         }
 
         if ($ruta === '/login.cgi') {
             // El firmware responde 302 tanto al login bueno como al malo; la
             // diferencia solo se ve al pedir `status.cgi`.
-            return Http::response('', 302, ['Location' => '/status.cgi']);
+            return Http::response('', 302, ['Location' => '/index.cgi']);
         }
 
-        // Sin sesión válida no hay 401: devuelve el formulario con un 200.
+        // Sin sesión válida no hay 401: desvía de vuelta al formulario.
         return $aceptaCredenciales
             ? Http::response(['host' => ['devmodel' => 'NanoStation loco M5', 'fwversion' => 'XW.v6.3.6', 'uptime' => 144173]], 200)
-            : Http::response($formulario, 200);
+            : Http::response('', 302, ['Location' => '/login.cgi']);
     });
 }
 
@@ -77,7 +81,15 @@ it('siembra la sesión antes de autenticar', function () {
     ]);
 });
 
-it('manda el formulario como multipart, que es lo que el CGI parsea', function () {
+it('no da por hecho un nombre de cookie: el real lleva la MAC dentro', function () {
+    // Con `AIROS_SESSIONID` —el nombre que se suponía— el driver abortaba antes
+    // de intentar siquiera el acceso, con unas credenciales correctas.
+    airOsFalso();
+
+    expect(app(AirOsDriver::class)->telemetry(antenaDePrueba())->reachable)->toBeTrue();
+});
+
+it('manda el formulario como multipart, igual que el equipo', function () {
     airOsFalso();
 
     app(AirOsDriver::class)->telemetry(antenaDePrueba());
@@ -88,8 +100,7 @@ it('manda el formulario como multipart, que es lo que el CGI parsea', function (
         ->and($login->body())->toContain('name="username"')
         ->and($login->body())->toContain('ubnt')
         ->and($login->body())->toContain('secreto')
-        // Campo oculto del formulario del equipo: hay firmwares que rechazan
-        // el POST si falta.
+        // Campo oculto que lleva el formulario del propio equipo.
         ->and($login->body())->toContain('name="uri"');
 });
 

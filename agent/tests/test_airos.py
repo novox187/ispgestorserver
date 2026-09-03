@@ -31,6 +31,8 @@ from ispgestor_agent.airos import AirOsError, AirOsSession
 
 USUARIO = "ubnt"
 CLAVE = "secreto"
+# Nombre real de la cookie en un equipo con MAC FC:EC:DA:2C:91:C1.
+COOKIE = "AIROS_FCECDA2C91C1"
 FORMULARIO = b'<html><form action="/login.cgi" enctype="multipart/form-data"></form></html>'
 ESTADO = {"host": {"devmodel": "NanoStation loco M5", "fwversion": "XW.v6.3.6", "uptime": 144173}}
 
@@ -50,7 +52,7 @@ class AntenaFalsa(BaseHTTPRequestHandler):
         cookie = self.headers.get("Cookie") or ""
         for parte in cookie.split(";"):
             nombre, _, valor = parte.strip().partition("=")
-            if nombre == "AIROS_SESSIONID" and valor:
+            if nombre == COOKIE and valor:
                 return valor
         return None
 
@@ -66,17 +68,17 @@ class AntenaFalsa(BaseHTTPRequestHandler):
         AntenaFalsa.peticiones.append(("GET", self.path))
 
         if self.path == "/login.cgi":
-            sesion = "semilla-de-la-antena"
+            sesion = "8df9ead2ea819391b4ba53b1879c8432"
             AntenaFalsa.sembradas.add(sesion)
             return self._responder(
-                200, FORMULARIO, {"Set-Cookie": f"AIROS_SESSIONID={sesion}; path=/"}
+                200, FORMULARIO, {"Set-Cookie": f"{COOKIE}={sesion}; Path=/; Version=1"}
             )
 
         if self.path == "/status.cgi":
             if self._sesion() in AntenaFalsa.autenticadas:
                 return self._responder(200, json.dumps(ESTADO).encode())
-            # Sin autenticar: 200 con el formulario, no un 401.
-            return self._responder(200, FORMULARIO)
+            # Sin autenticar: 302 de vuelta al formulario, no un 401.
+            return self._responder(302, b"", {"Location": "/login.cgi"})
 
         return self._responder(404, b"")
 
@@ -87,20 +89,20 @@ class AntenaFalsa(BaseHTTPRequestHandler):
         cuerpo = self.rfile.read(int(self.headers.get("Content-Length") or 0))
         sesion = self._sesion()
 
-        # El CGI solo entiende multipart, y solo puede validar una sesión que ya
-        # exista: las dos cosas que el agente hacía mal.
-        if not self.headers.get("Content-Type", "").startswith("multipart/form-data"):
-            return self._responder(200, FORMULARIO)
-
-        if sesion not in AntenaFalsa.sembradas:
-            return self._responder(200, FORMULARIO)
-
+        # Solo se puede validar una sesión que ya exista. Si no hay semilla no se
+        # autentica nada — pero la respuesta es un 302 igual, que es la trampa:
+        # parece que el acceso fue bien.
         texto = cuerpo.decode("utf-8", "replace")
-        if f'name="username"\r\n\r\n{USUARIO}' in texto and f'name="password"\r\n\r\n{CLAVE}' in texto:
+        credenciales_ok = (
+            f'name="username"\r\n\r\n{USUARIO}' in texto
+            and f'name="password"\r\n\r\n{CLAVE}' in texto
+        )
+
+        if sesion in AntenaFalsa.sembradas and credenciales_ok:
             AntenaFalsa.autenticadas.add(sesion)
 
         # 302 tanto si acertó como si no: la diferencia solo se ve en status.cgi.
-        return self._responder(302, b"", {"Location": "/status.cgi"})
+        return self._responder(302, b"", {"Location": "/index.cgi"})
 
 
 @pytest.fixture
@@ -153,9 +155,18 @@ class TestAcceso:
         ]
 
     def test_manda_el_formulario_como_multipart(self, antena):
+        # No porque el equipo rechace urlencoded —lo acepta— sino porque es lo
+        # que declara su propio formulario y no depende de esa tolerancia.
         sesion(antena).status()
 
         assert AntenaFalsa.tipos_recibidos[0].startswith("multipart/form-data")
+
+    def test_no_supone_un_nombre_fijo_de_cookie(self, antena):
+        # La antena de mentira usa el nombre real, que lleva la MAC dentro. Un
+        # cliente que busque «AIROS_SESSIONID» no encuentra nada y da por
+        # rechazadas unas credenciales que son correctas.
+        assert COOKIE != "AIROS_SESSIONID"
+        sesion(antena).status()
 
     def test_una_clave_mala_se_reporta_como_tal(self, antena):
         # Y no como «sesión caducada», que era lo que salía: reautenticar en
