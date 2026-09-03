@@ -97,6 +97,11 @@ def parse(payload: bytes, source_ip: str | None = None) -> UbntDevice | None:
         return None
 
     device = UbntDevice(ip_address=source_ip)
+
+    # airOS no manda un TLV 0x02, manda UNO POR INTERFAZ. Se acumulan todos y se
+    # decide al final cuál sirve: ver `_resolver_direccion`.
+    interfaces: list[tuple[str, str]] = []
+
     offset = 4
 
     while offset + 3 <= len(payload):
@@ -115,11 +120,11 @@ def parse(payload: bytes, source_ip: str | None = None) -> UbntDevice | None:
         if tlv_type == TLV_MAC and length == 6:
             device.mac_address = _mac(value)
         elif tlv_type == TLV_MAC_AND_IP and length == 10:
-            # Seis bytes de MAC y cuatro de IP. Esta IP es la que el equipo cree
-            # tener, que puede diferir de la de origen del paquete si hay NAT por
-            # medio; se prefiere la del propio equipo.
-            device.mac_address = _mac(value[:6])
-            device.ip_address = ".".join(str(b) for b in value[6:10])
+            # Seis bytes de MAC y cuatro de IP de UNA de las interfaces del
+            # equipo. No se asigna aquí: sobrescribir en cada vuelta deja la
+            # última interfaz que liste el firmware, que no tiene por qué ser
+            # por la que se le alcanza.
+            interfaces.append((_mac(value[:6]), ".".join(str(b) for b in value[6:10])))
         elif tlv_type == TLV_FIRMWARE:
             device.firmware = _text(value)
         elif tlv_type == TLV_HOSTNAME:
@@ -133,11 +138,57 @@ def parse(payload: bytes, source_ip: str | None = None) -> UbntDevice | None:
         elif tlv_type == TLV_UPTIME and length == 4:
             (device.uptime_seconds,) = struct.unpack(">I", value)
 
+    _resolver_direccion(device, interfaces, source_ip)
+
     # Sin MAC ni nombre no hay nada que ofrecerle al operador.
     if device.mac_address is None and device.hostname is None:
         return None
 
     return device
+
+
+def _resolver_direccion(
+    device: UbntDevice,
+    interfaces: list[tuple[str, str]],
+    source_ip: str | None,
+) -> None:
+    """Decide con qué dirección y con qué MAC se queda el equipo descubierto.
+
+    airOS emite un TLV 0x02 por cada interfaz: la de gestión, la inalámbrica,
+    una `169.254.x.x` de enlace local y la `192.168.x.1` de rescate. Quedarse
+    con la última —que es lo que hace un bucle que sobrescribe sin mirar— es
+    quedarse casi siempre con una por la que el equipo NO es alcanzable. En un
+    barrido real de 23 antenas, 22 salieron con una dirección inservible y seis
+    colisionaron todas en la misma `192.168.90.1`.
+
+    La dirección que vale es la de origen de la respuesta: por definición es
+    aquella por la que se acaba de hablar con el equipo, y por tanto la única
+    con la que el sondeo posterior va a poder abrir sesión. Los TLV solo sirven
+    para quedarse con la MAC de ESA interfaz, que identifica al equipo de forma
+    estable aunque le cambien la dirección.
+    """
+    if source_ip is not None:
+        device.ip_address = source_ip
+
+        propia = next((mac for mac, ip in interfaces if ip == source_ip), None)
+
+        if propia is not None:
+            device.mac_address = propia
+        elif device.mac_address is None and interfaces:
+            # El equipo no se reconoce en la dirección por la que respondió: hay
+            # NAT por medio, o la sonda entró por otra interfaz. Vale cualquier
+            # MAC suya como identificador; la dirección sigue siendo la de
+            # origen, que es la única por la que se le alcanza.
+            device.mac_address = interfaces[0][0]
+
+        return
+
+    # Sin origen conocido —una traza guardada, una prueba— lo único que hay es
+    # lo que el equipo declara de sí mismo.
+    if interfaces:
+        mac, ip = interfaces[0]
+        device.mac_address = device.mac_address or mac
+        device.ip_address = ip
 
 
 def sweep(cidr: str, timeout: float = 2.0, max_hosts: int = 1024) -> list[UbntDevice]:

@@ -1,0 +1,53 @@
+[Unit]
+# Unidad plantilla: `ispgestor-agent@monitor` corre con la configuración de
+# /etc/ispgestor-agent/monitor.conf. Existe porque una misma máquina puede
+# necesitar dos roles a la vez —el hosting es a la vez `vpn_host` (administra
+# los peers de WireGuard) y `monitor` (sondea el parque por el propio túnel)— y
+# la unidad simple fija una única ruta de configuración: instalar el segundo
+# agente pisaba las credenciales del primero.
+#
+# Los roles NO se funden en un proceso a propósito: el bucle del `monitor` tarda
+# minutos por vuelta sondeando cientos de equipos, y compartirlo con el de
+# `vpn_host` —que responde tareas cada tres segundos— dejaría el alta de routers
+# esperando a que termine un sondeo.
+Description=Agente de ISP Gestor (instancia %i)
+Documentation=https://github.com/ironlink/ispgestor
+After=network-online.target
+Wants=network-online.target
+# Un agente que no arranca deja de detectar equipos en silencio; conviene que
+# systemd insista indefinidamente en vez de rendirse tras unos intentos.
+# Va en [Unit] y no en [Service]: ahí systemd la ignora con un aviso.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/opt/ispgestor-agent/venv/bin/python -m ispgestor_agent --config /etc/ispgestor-agent/%i.conf run
+WorkingDirectory=/opt/ispgestor-agent
+
+# Root es necesario en los tres roles y por motivos distintos: el `provisioner`
+# tiene que abrir el puerto UDP 5678 (privilegiado) para escuchar MNDP, el
+# `vpn_host` tiene que administrar la interfaz WireGuard del sistema, y el
+# `monitor` abre sockets en crudo para barrer rangos.
+User=root
+
+Restart=always
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ispgestor-agent-%i
+
+# Endurecimiento: el agente no necesita tocar nada del sistema salvo su propia
+# configuración y, en el rol vpn_host, el directorio de WireGuard.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=full
+ReadWritePaths=/etc/ispgestor-agent /etc/wireguard
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

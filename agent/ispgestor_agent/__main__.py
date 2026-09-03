@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import logging
 import platform
 import socket
@@ -44,6 +45,11 @@ def main(argv: list[str] | None = None) -> int:
     enroll.add_argument("--endpoint-host", help="Host público al que marcarán los routers (rol vpn_host).")
     enroll.add_argument("--endpoint-port", type=int, default=51820, help="Puerto UDP del servidor (rol vpn_host).")
     enroll.add_argument("--subnet", default="10.77.0.0/24", help="Subred del túnel (rol vpn_host).")
+    enroll.add_argument(
+        "--scannable",
+        help="Rangos CIDR que este agente podrá barrer, separados por coma (rol monitor). "
+        "Sin esto la lista queda vacía y el agente rechaza todos los barridos.",
+    )
     enroll.add_argument("--insecure", action="store_true", help="No verificar el certificado TLS (solo pruebas).")
 
     commands.add_parser("run", help="Arranca el bucle del agente.")
@@ -77,6 +83,12 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _enroll(args) -> int:
+    try:
+        scannable = _parse_cidrs(args.scannable)
+    except ValueError as exc:
+        log.error("%s", exc)
+        return 2
+
     config = AgentConfig(
         base_url=args.url.rstrip("/"),
         role=args.role or "",
@@ -87,6 +99,7 @@ def _enroll(args) -> int:
         endpoint_host=args.endpoint_host or "",
         endpoint_port=args.endpoint_port,
         subnet=args.subnet,
+        scannable_cidrs=scannable,
         verify_tls=not args.insecure,
     )
 
@@ -141,9 +154,53 @@ def _enroll(args) -> int:
 
     log.info("Agente '%s' enrolado con el rol '%s'.", config.name, config.role)
     log.info("Credenciales guardadas en %s (modo 0600).", args.config)
-    log.info("Arráncalo con: systemctl enable --now ispgestor-agent")
+
+    # Una lista vacía significa «no barrer nada», así que un monitor enrolado sin
+    # rangos se queda mudo: acepta las tareas de barrido y las rechaza una por
+    # una. Se avisa aquí porque el rol puede venir del servidor y no conocerse
+    # hasta este punto.
+    if config.role == "monitor" and not config.scannable_cidrs:
+        log.warning(
+            "Este agente no tiene ningún rango permitido para barrer y rechazará "
+            "todos los barridos. Vuelve a enrolarlo añadiendo, por ejemplo, "
+            "--scannable 10.10.10.0/24"
+        )
+
+    log.info("Arráncalo con: systemctl enable --now %s", _unit_name(args.config))
 
     return 0
+
+
+def _parse_cidrs(raw: str | None) -> list[str]:
+    """Interpreta la lista de rangos separados por coma, validándolos.
+
+    Se valida al enrolar y no al barrer porque un dedazo aquí —un `/24` escrito
+    `/243`, una coma de más— produciría un agente que se instala sin quejarse y
+    falla meses después, la primera vez que alguien pide un barrido.
+    """
+    valores = [c.strip() for c in (raw or "").split(",") if c.strip()]
+
+    for valor in valores:
+        try:
+            ipaddress.ip_network(valor, strict=False)
+        except ValueError:
+            raise ValueError(f"'{valor}' no es un rango CIDR válido (se esperaba algo como 10.10.10.0/24).")
+
+    return valores
+
+
+def _unit_name(config_path: Path) -> str:
+    """Deduce la unidad de systemd que corresponde a este fichero de configuración.
+
+    Las instalaciones con instancia guardan la configuración en
+    `/etc/ispgestor-agent/<instancia>.conf` y corren bajo la unidad plantilla;
+    la instalación heredada usa `agent.conf` y la unidad simple. Deducirlo del
+    nombre evita tener que pasar la instancia por la línea de órdenes solo para
+    imprimir el mensaje correcto.
+    """
+    instancia = config_path.stem
+
+    return "ispgestor-agent" if instancia == "agent" else f"ispgestor-agent@{instancia}"
 
 
 def _run(args) -> int:

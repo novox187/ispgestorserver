@@ -91,6 +91,37 @@ En el rol `vpn_host` la clave pública del servidor **se lee de la propia
 interfaz**, no se teclea: escribirla mal produce un túnel que nunca completa el
 handshake y cuesta mucho diagnosticar.
 
+En el rol `monitor`, `--scannable` es obligatorio en la práctica: fija los
+rangos que el agente aceptará barrer y **una lista vacía no permite ninguno**.
+Vive en la máquina del agente, no en el panel, para que el servidor pueda pedir
+un barrido pero no ampliar lo que se puede barrer.
+
+```bash
+ispgestor-agent --config /etc/ispgestor-agent/monitor.conf \
+    enroll --url https://api.ironlink.uk --token <TOKEN> \
+    --role monitor --scannable 10.10.10.0/24
+```
+
+### Dos roles en la misma máquina
+
+El hosting es a la vez `vpn_host` —administra los peers de WireGuard— y el mejor
+sitio para el `monitor`, porque alcanza todo el parque por el propio túnel. Los
+roles **no se funden en un proceso**: el bucle del `monitor` tarda minutos por
+vuelta sondeando cientos de equipos, y compartirlo con el de `vpn_host` —que
+atiende tareas cada tres segundos— dejaría el alta de routers esperando a que
+termine un sondeo.
+
+Conviven mediante la unidad plantilla, que toma la configuración de
+`/etc/ispgestor-agent/<instancia>.conf`:
+
+```bash
+systemctl enable --now ispgestor-agent@monitor
+journalctl -u ispgestor-agent@monitor -f
+```
+
+El instalador del panel lo detecta solo: si la máquina ya tiene un agente con
+otro rol, instala el nuevo al lado en vez de pisarle las credenciales.
+
 ### Comprobar antes de arrancar
 
 ```bash

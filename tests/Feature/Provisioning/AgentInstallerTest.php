@@ -73,7 +73,32 @@ it('incrusta el agente entero, no una referencia a otra descarga', function () {
 
     expect($nombres)->toContain('install.sh')
         ->toContain('ispgestor-agent.service')
+        // `install.sh` copia la unidad plantilla sin condiciones. Si no viaja en
+        // el paquete, la instalación aborta en el `cp` y el fallo solo aparece
+        // en la máquina del cliente.
+        ->toContain('ispgestor-agent@.service')
         ->toContain('ispgestor_agent/__main__.py');
+});
+
+it('el instalador de un monitor pregunta qué rangos podrá barrer', function () {
+    // Sin `--scannable` la lista queda vacía, que significa «no barrer nada»:
+    // el agente se instalaría bien y rechazaría todos los barridos.
+    $script = $this->get(urlInstalador(agenteDePrueba('monitor')))->getContent();
+
+    expect($script)->toContain('--scannable')
+        ->toContain('ROLE" == "monitor"');
+});
+
+it('el instalador no pisa a un agente de otro rol en la misma máquina', function () {
+    // El hosting es a la vez vpn_host y el mejor sitio para el monitor. Con una
+    // sola unidad, el segundo se llevaba por delante las credenciales del
+    // primero y lo dejaba fuera en silencio.
+    $script = $this->get(urlInstalador(agenteDePrueba('monitor')))->getContent();
+
+    expect($script)->toContain('ispgestor-agent@${ROLE}')
+        ->toContain('${CONFIG_DIR}/${ROLE}.conf')
+        // Y el enrolamiento tiene que apuntar a ESE fichero, no al de siempre.
+        ->toContain('"$BIN" --config "$CONFIG" enroll');
 });
 
 it('el script generado es bash válido', function () {

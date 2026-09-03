@@ -16,8 +16,14 @@ ROLE="{{ROLE}}"
 AGENT_NAME="{{AGENT_NAME}}"
 
 PREFIX=/opt/ispgestor-agent
+CONFIG_DIR=/etc/ispgestor-agent
 SRC_DIR=/tmp/ispgestor-agent-src.$$
 BIN=/usr/local/bin/ispgestor-agent
+
+# Unidad y fichero de configuración que usará ESTE agente. Se deciden más abajo,
+# una vez se sabe si la máquina ya tiene otro agente con un rol distinto.
+UNIT=ispgestor-agent
+CONFIG="${CONFIG_DIR}/agent.conf"
 
 rojo()  { printf '\033[0;31m%s\033[0m\n' "$*" >&2; }
 verde() { printf '\033[0;32m%s\033[0m\n' "$*"; }
@@ -90,10 +96,29 @@ python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv
 
 # ── 3. Instalar ──────────────────────────────────────────────────────────────
 
-# Si ya había un agente corriendo, se para antes de reemplazar sus ficheros.
-if systemctl is-active --quiet ispgestor-agent 2>/dev/null; then
+# ¿Hay ya un agente en esta máquina, y con qué rol? De la respuesta depende si
+# este se instala encima o al lado.
+#
+# El caso que obliga a distinguir es el hosting: es a la vez `vpn_host` —
+# administra los peers de WireGuard— y el mejor sitio para el `monitor`, porque
+# alcanza todo el parque por el propio túnel. Con una sola unidad, instalar el
+# segundo pisaba las credenciales del primero y lo dejaba fuera en silencio.
+rol_previo=""
+if [[ -f "${CONFIG_DIR}/agent.conf" ]]; then
+    rol_previo="$(python3 -c 'import json;print(json.load(open("'"${CONFIG_DIR}"'/agent.conf")).get("role",""))' 2>/dev/null || true)"
+fi
+
+if [[ -n "$rol_previo" && "$rol_previo" != "$ROLE" ]]; then
+    UNIT="ispgestor-agent@${ROLE}"
+    CONFIG="${CONFIG_DIR}/${ROLE}.conf"
+    info "Esta máquina ya tiene un agente '${rol_previo}'. Este se instala aparte, como '${UNIT}'."
+fi
+
+# Si el agente que vamos a reemplazar estaba corriendo, se para antes de tocar
+# sus ficheros. Solo ese: los de otros roles siguen trabajando.
+if systemctl is-active --quiet "$UNIT" 2>/dev/null; then
     info "Deteniendo el agente que ya estaba instalado."
-    systemctl stop ispgestor-agent
+    systemctl stop "$UNIT"
 fi
 
 info "Instalando en ${PREFIX}."
@@ -166,32 +191,69 @@ elif [[ "$ROLE" == "provisioner" ]]; then
 
     [[ -n "$elegida" ]] || morir "Sin NIC de aprovisionamiento el agente no detectaría ningún equipo."
     ARGS+=(--interfaces "$elegida")
+
+elif [[ "$ROLE" == "monitor" ]]; then
+    # Los rangos que este agente aceptará barrer. Se guardan AQUÍ, en la
+    # máquina, y no en el panel: el servidor puede pedir un barrido, pero no
+    # puede ampliar esta lista. Por eso hay que preguntarlos en vez de
+    # heredarlos del alta, y por eso una lista vacía significa «ninguno».
+    #
+    # Se proponen las redes privadas que esta máquina ya sabe alcanzar, que en
+    # el hosting son justo las del otro lado del túnel. Se excluyen los puentes
+    # de Docker: son redes de contenedores, no parque que monitorizar.
+    mapfile -t rangos < <(
+        ip -4 route show 2>/dev/null \
+        | awk '$1 ~ /\/[0-9]+$/ && $2 == "dev" && $3 !~ /^(docker|veth|br-)/ {print $1}' \
+        | grep -E '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)' \
+        | sort -u || true
+    )
+
+    if [[ ${#rangos[@]} -gt 0 ]]; then
+        propuesta="$(IFS=,; echo "${rangos[*]}")"
+        echo "   Redes privadas que esta máquina alcanza:"
+        for r in "${rangos[@]}"; do
+            printf '     · %s\n' "$r"
+        done
+        respuesta="$(preguntar "   ¿Cuáles podrá barrer? (coma) [${propuesta}]: ")"
+        cidrs="${respuesta:-$propuesta}"
+    else
+        aviso "No se detectó ninguna red privada alcanzable desde esta máquina."
+        cidrs="$(preguntar "   Rangos que podrá barrer, separados por coma (ej. 10.10.10.0/24): ")"
+    fi
+
+    if [[ -n "$cidrs" ]]; then
+        ARGS+=(--scannable "$cidrs")
+    else
+        # No es motivo para abortar: el sondeo de los equipos ya dados de alta
+        # funciona igual. Lo que no funcionará es el descubrimiento.
+        aviso "Sin rangos, este agente sondeará el parque pero rechazará todos los barridos."
+    fi
 fi
 
 # ── 5. Enrolar ───────────────────────────────────────────────────────────────
 
 info "Enrolando contra ${API_URL}."
-"$BIN" enroll --url "$API_URL" --token "$ENROLLMENT_TOKEN" --role "$ROLE" "${ARGS[@]}" \
+"$BIN" --config "$CONFIG" enroll --url "$API_URL" --token "$ENROLLMENT_TOKEN" --role "$ROLE" "${ARGS[@]}" \
     || morir "Falló el enrolamiento. Si el enlace tiene más de 30 minutos, genera otro desde el panel."
 
 # ── 6. Comprobar y arrancar ──────────────────────────────────────────────────
 
 info "Comprobando el entorno."
-"$BIN" selftest || morir "El agente quedó instalado pero el selftest falló. Revisa lo anterior."
+"$BIN" --config "$CONFIG" selftest || morir "El agente quedó instalado pero el selftest falló. Revisa lo anterior."
 
 info "Arrancando el servicio."
-systemctl enable --now ispgestor-agent >/dev/null 2>&1 || morir "No se pudo arrancar el servicio."
+systemctl enable --now "$UNIT" >/dev/null 2>&1 || morir "No se pudo arrancar el servicio."
 
 sleep 3
-if systemctl is-active --quiet ispgestor-agent; then
+if systemctl is-active --quiet "$UNIT"; then
     echo
     verde "✓ Listo. El agente '${AGENT_NAME}' está instalado, enrolado y corriendo."
     echo "   Ya debería aparecer en línea en el panel, en Red → Agentes."
     echo
-    echo "   Ver el registro:  journalctl -u ispgestor-agent -f"
+    echo "   Ver el registro:  journalctl -u ${UNIT} -f"
 else
     echo
     rojo "El servicio no quedó activo. Mira qué pasó con:"
-    echo "   journalctl -u ispgestor-agent -n 50 --no-pager"
+    echo "   journalctl -u ${UNIT} -n 50 --no-pager"
     exit 1
 fi

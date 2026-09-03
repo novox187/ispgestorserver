@@ -19,6 +19,7 @@ set -euo pipefail
 PREFIX=/opt/ispgestor-agent
 CONFIG_DIR=/etc/ispgestor-agent
 SERVICE=/etc/systemd/system/ispgestor-agent.service
+SERVICE_TEMPLATE=/etc/systemd/system/ispgestor-agent@.service
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ $EUID -ne 0 ]]; then
@@ -63,8 +64,13 @@ echo "==> Creando ${CONFIG_DIR}"
 mkdir -p "${CONFIG_DIR}"
 chmod 700 "${CONFIG_DIR}"
 
-echo "==> Instalando la unidad de systemd"
+echo "==> Instalando las unidades de systemd"
 cp "${SOURCE_DIR}/ispgestor-agent.service" "${SERVICE}"
+# La plantilla permite un agente por rol en la misma máquina
+# (`ispgestor-agent@monitor`, con /etc/ispgestor-agent/monitor.conf). Se instala
+# siempre aunque no se use: no arranca nada por sí sola y evita tener que volver
+# a copiar ficheros el día que a un host le haga falta un segundo rol.
+cp "${SOURCE_DIR}/ispgestor-agent@.service" "${SERVICE_TEMPLATE}"
 systemctl daemon-reload
 
 echo "==> Atajo en /usr/local/bin/ispgestor-agent"
@@ -94,6 +100,13 @@ Siguiente paso — enrolar el agente con el token que genera el panel
   ispgestor-agent enroll --url https://api.ironlink.uk --token <TOKEN> \
       --role vpn_host --wg-interface wg0 --endpoint-host vpn.ironlink.uk
 
+  # Sondeo del parque y barridos de descubrimiento. Los rangos de --scannable
+  # son el límite de lo que este agente aceptará barrer, y se comprueban aquí,
+  # en la máquina, no en el servidor.
+  ispgestor-agent --config /etc/ispgestor-agent/monitor.conf \
+      enroll --url https://api.ironlink.uk --token <TOKEN> \
+      --role monitor --scannable 10.10.10.0/24
+
 Comprobar el entorno antes de arrancar:
 
   ispgestor-agent selftest
@@ -102,5 +115,11 @@ Arrancar:
 
   systemctl enable --now ispgestor-agent
   journalctl -u ispgestor-agent -f
+
+Un segundo rol en la misma máquina usa la unidad plantilla, que toma la
+configuración de /etc/ispgestor-agent/<instancia>.conf:
+
+  systemctl enable --now ispgestor-agent@monitor
+  journalctl -u ispgestor-agent@monitor -f
 
 EOF

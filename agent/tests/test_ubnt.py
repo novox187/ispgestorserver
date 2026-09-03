@@ -53,13 +53,55 @@ class TestParse:
         assert d.model == "NanoStation M5"
         assert d.essid == "ENLACE-NORTE"
 
-    def test_prefiere_la_ip_que_declara_el_equipo(self):
-        # Si hay NAT por medio, la IP de origen del paquete no es la del equipo.
+    def test_se_queda_con_la_direccion_por_la_que_respondio(self):
+        # Este test decía lo contrario y por eso el fallo pasó desapercibido:
+        # daba por buena la dirección que declara el equipo. Pero la dirección
+        # que sirve es aquella por la que se le acaba de alcanzar; la que él
+        # declara puede ser de una interfaz a la que no llega nadie.
+        payload = trama(tlv(0x02, MAC + bytes([192, 168, 1, 20])))
+
+        d = parse(payload, source_ip="10.9.0.5")
+
+        assert d.ip_address == "10.9.0.5"
+
+    def test_varias_interfaces_elige_la_del_origen(self):
+        # El caso real: airOS lista todas sus interfaces en TLV 0x02 y la de
+        # gestión no es la última. Un barrido de 23 antenas devolvió 22
+        # direcciones inservibles por quedarse con la que cerraba la lista.
+        wlan = bytes([0xFC, 0xEC, 0xDA, 0x6C, 0x90, 0x50])
+        lan = bytes([0xFC, 0xEC, 0xDA, 0x6C, 0x90, 0x51])
+
+        payload = trama(
+            tlv(0x02, lan + bytes([10, 10, 10, 250])),
+            tlv(0x02, wlan + bytes([169, 254, 144, 81])),
+            tlv(0x02, lan + bytes([192, 168, 90, 1])),
+            tlv(0x0B, b"STATION DORADO"),
+        )
+
+        d = parse(payload, source_ip="10.10.10.250")
+
+        assert d.ip_address == "10.10.10.250"
+        # Y la MAC es la de ESA interfaz, no la de la última que se leyó.
+        assert d.mac_address == "FC:EC:DA:6C:90:51"
+
+    def test_sin_origen_se_acepta_lo_que_declara_el_equipo(self):
+        # Una traza guardada o una prueba no traen dirección de origen: entonces
+        # lo que el equipo declara es todo lo que hay.
+        payload = trama(tlv(0x02, MAC + bytes([192, 168, 1, 20])))
+
+        d = parse(payload)
+
+        assert d.ip_address == "192.168.1.20"
+
+    def test_origen_desconocido_por_el_equipo_conserva_el_origen(self):
+        # Con NAT por medio el equipo no se reconoce en la dirección por la que
+        # respondió. Se conserva esa, que es la única por la que se le alcanza.
         payload = trama(tlv(0x02, MAC + bytes([192, 168, 1, 20])))
 
         d = parse(payload, source_ip="10.0.0.99")
 
-        assert d.ip_address == "192.168.1.20"
+        assert d.ip_address == "10.0.0.99"
+        assert d.mac_address == "24:A4:3C:11:22:33"
 
     def test_ignora_tlv_desconocidos(self):
         # Un firmware nuevo puede añadir campos: eso no puede invalidar el resto.

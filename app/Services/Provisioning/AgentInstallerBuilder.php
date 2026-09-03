@@ -27,6 +27,10 @@ class AgentInstallerBuilder
         'ispgestor_agent',
         'install.sh',
         'ispgestor-agent.service',
+        // La unidad plantilla permite un agente por rol en la misma máquina.
+        // `install.sh` la copia siempre, así que si falta aquí la instalación
+        // aborta en el `cp` — y solo se vería en la máquina del cliente.
+        'ispgestor-agent@.service',
         'requirements.txt',
         'README.md',
     ];
