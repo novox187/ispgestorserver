@@ -65,7 +65,13 @@ class NetworkDeviceController extends Controller
             return $this->mikrotikIsReadOnly();
         }
 
-        $validated['driver'] ??= DeviceVendor::from($validated['vendor'])->defaultDriver();
+        $vendor = DeviceVendor::from($validated['vendor']);
+
+        $validated['driver'] ??= $vendor->defaultDriver();
+        // El formulario deja el puerto vacío cuando el operador no tiene por
+        // qué saberlo, y ahí no vale caer en el `default` de la columna: es
+        // 8728, el de la API de RouterOS, y dejaría la antena inalcanzable.
+        $validated['port'] = $validated['port'] ?? $vendor->defaultPort();
 
         $device = NetworkDevice::create($validated);
 
@@ -86,6 +92,14 @@ class NetworkDeviceController extends Controller
         // es lo que hace un formulario de edición que no la muestra.
         if (blank($validated['password'] ?? null)) {
             unset($validated['password']);
+        }
+
+        // Vaciar el puerto en el formulario significa «el de siempre», no
+        // «ninguno»: la columna no admite nulos y el `update` moriría con un
+        // error de base de datos delante del operador.
+        if (array_key_exists('port', $validated) && $validated['port'] === null) {
+            $vendor = DeviceVendor::tryFrom((string) ($validated['vendor'] ?? $device->vendor?->value));
+            $validated['port'] = $vendor?->defaultPort() ?? $device->port;
         }
 
         $device->update($validated);

@@ -32,6 +32,31 @@ enum DeviceVendor: string
     }
 
     /**
+     * Puerto del plano de gestión de este fabricante.
+     *
+     * No es un detalle cosmético: es la diferencia entre hablar con el equipo y
+     * no hablar con él. RouterOS escucha su API binaria en 8728 y airOS publica
+     * su interfaz web en 443, y no hay nada en común entre ambos.
+     *
+     * Vive aquí, junto a `defaultDriver()`, porque es la misma decisión: el
+     * fabricante determina por qué protocolo y por qué puerta se le habla. La
+     * columna `port` de la tabla lleva un `default(8728)` heredado de cuando el
+     * inventario solo tenía routers MikroTik; cualquier alta que no fije el
+     * puerto explícitamente se lo lleva puesto, y una antena Ubiquiti con 8728
+     * falla al primer intento con un error de conexión que no explica nada.
+     */
+    public function defaultPort(): int
+    {
+        return match ($this) {
+            self::MIKROTIK => 8728,
+            // 443 y no 80: airOS trae la web por TLS de fábrica, con
+            // certificado autofirmado. El driver interpreta el 80 como HTTP
+            // plano, así que este valor también elige el esquema.
+            self::UBIQUITI => 443,
+        };
+    }
+
+    /**
      * Prefijos OUI registrados a nombre del fabricante.
      *
      * Sirven para dos cosas distintas: decidir si un equipo detectado en el

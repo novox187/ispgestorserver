@@ -180,6 +180,13 @@ class NetworkScanController extends Controller
             'role'        => $rol,
             'driver'      => $vendor->defaultDriver(),
             'host'        => $finding->ip_address,
+            // El puerto del fabricante, explícito. La columna arrastra un
+            // `default(8728)` —el de la API de RouterOS— de cuando esto solo
+            // guardaba routers MikroTik: sin esta línea, cada antena Ubiquiti
+            // que se diera de alta quedaba apuntando a un puerto donde airOS no
+            // escucha, y la primera prueba de credenciales fallaba con un error
+            // de conexión que no dice por qué.
+            'port'        => $vendor->defaultPort(),
             'mac_address' => $finding->mac_address,
             'model'       => $finding->model,
             'firmware_version' => $finding->firmware,
