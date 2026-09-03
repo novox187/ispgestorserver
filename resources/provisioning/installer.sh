@@ -20,9 +20,13 @@ CONFIG_DIR=/etc/ispgestor-agent
 SRC_DIR=/tmp/ispgestor-agent-src.$$
 BIN=/usr/local/bin/ispgestor-agent
 
-# Unidad y fichero de configuración que usará ESTE agente. Se deciden más abajo,
-# una vez se sabe si la máquina ya tiene otro agente con un rol distinto.
-UNIT=ispgestor-agent
+# Instancia y fichero de configuración que usará ESTE agente. Se deciden más
+# abajo, una vez se sabe si la máquina ya tiene otro agente con un rol distinto.
+#
+# «agent» es la instalación de siempre. El nombre lo traduce a unidad de systemd
+# o a demonio de launchd `ispgestor-agent-service`, que es quien sabe en cuál de
+# los dos está.
+INSTANCIA=agent
 CONFIG="${CONFIG_DIR}/agent.conf"
 
 rojo()  { printf '\033[0;31m%s\033[0m\n' "$*" >&2; }
@@ -57,6 +61,14 @@ echo
 
 [[ $EUID -eq 0 ]] || morir "Hay que ejecutarlo como root (usa sudo)."
 
+# macOS comparte con Linux las rutas, los permisos y el entorno virtual, pero
+# no systemd. Lo que cambia se resuelve en `ispgestor-agent-service`.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    SISTEMA=macos
+else
+    SISTEMA=linux
+fi
+
 command -v python3 >/dev/null || morir "Falta python3. Instálalo y vuelve a ejecutar."
 
 # `import venv` puede funcionar y aun así fallar la creación del entorno: en
@@ -68,9 +80,15 @@ if ! python3 -c 'import ensurepip' >/dev/null 2>&1; then
         DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
         DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "python${version}-venv" \
             || morir "No se pudo instalar python${version}-venv. Instálalo a mano y reintenta."
+    elif [[ "$SISTEMA" == "macos" ]]; then
+        morir "El python3 de este Mac no puede crear entornos virtuales. Instala las herramientas de desarrollo con 'xcode-select --install', o Python desde python.org, y reintenta."
     else
         morir "Falta ensurepip y no hay apt-get. Instala el paquete de venv de tu distribución."
     fi
+fi
+
+if [[ "$ROLE" == "vpn_host" && "$SISTEMA" == "macos" ]]; then
+    morir "El rol vpn_host administra el WireGuard del hosting y solo tiene sentido en el servidor Linux."
 fi
 
 if [[ "$ROLE" == "vpn_host" ]]; then
@@ -109,16 +127,17 @@ if [[ -f "${CONFIG_DIR}/agent.conf" ]]; then
 fi
 
 if [[ -n "$rol_previo" && "$rol_previo" != "$ROLE" ]]; then
-    UNIT="ispgestor-agent@${ROLE}"
+    INSTANCIA="$ROLE"
     CONFIG="${CONFIG_DIR}/${ROLE}.conf"
-    info "Esta máquina ya tiene un agente '${rol_previo}'. Este se instala aparte, como '${UNIT}'."
+    info "Esta máquina ya tiene un agente '${rol_previo}'. Este se instala aparte, como instancia '${ROLE}'."
 fi
 
 # Si el agente que vamos a reemplazar estaba corriendo, se para antes de tocar
 # sus ficheros. Solo ese: los de otros roles siguen trabajando.
-if systemctl is-active --quiet "$UNIT" 2>/dev/null; then
+if [[ -x /usr/local/bin/ispgestor-agent-service ]] \
+    && ispgestor-agent-service is-active "$INSTANCIA" 2>/dev/null; then
     info "Deteniendo el agente que ya estaba instalado."
-    systemctl stop "$UNIT"
+    ispgestor-agent-service stop "$INSTANCIA"
 fi
 
 info "Instalando en ${PREFIX}."
@@ -164,10 +183,21 @@ elif [[ "$ROLE" == "provisioner" ]]; then
     # La NIC de aprovisionamiento es el límite físico de seguridad del sistema:
     # solo se dan de alta equipos vistos por ella. Por eso se elige con cuidado
     # y se descarta la que lleva la salida a internet.
-    salida="$(ip route show default 2>/dev/null | awk '{print $5}' | head -1)"
+    # Ni la lista de NIC ni la ruta por defecto se consultan igual en los dos
+    # sistemas: macOS no tiene /sys ni el comando `ip`.
+    if [[ "$SISTEMA" == "macos" ]]; then
+        salida="$(route -n get default 2>/dev/null | awk '/interface:/{print $2}' | head -1)"
+        listar_nics() { ifconfig -l | tr ' ' '\n'; }
+    else
+        salida="$(ip route show default 2>/dev/null | awk '{print $5}' | head -1)"
+        listar_nics() { ls /sys/class/net; }
+    fi
+
+    # Se descartan las virtuales de los dos sistemas: en macOS las `en*` son
+    # las de verdad y todo lo demás (bridge, utun, awdl, llw…) es interno.
     mapfile -t candidatas < <(
-        ls /sys/class/net \
-        | grep -vE '^(lo|docker|veth|br-|wg|tun|tap|virbr)' \
+        listar_nics \
+        | grep -vE '^(lo|docker|veth|br-|wg|tun|tap|virbr|bridge|utun|awdl|llw|gif|stf|ap[0-9]|anpi)' \
         | grep -v "^${salida}$" || true
     )
 
@@ -180,9 +210,17 @@ elif [[ "$ROLE" == "provisioner" ]]; then
     else
         echo "   NIC disponibles (excluyendo '${salida}', que da la salida a internet):"
         for n in "${candidatas[@]}"; do
-            estado="$(cat "/sys/class/net/$n/operstate" 2>/dev/null || echo '?')"
-            cable="$(cat "/sys/class/net/$n/carrier" 2>/dev/null || echo '0')"
-            [[ "$cable" == "1" ]] && cable="con cable" || cable="sin cable"
+            if [[ "$SISTEMA" == "macos" ]]; then
+                # `status: active` es lo que imprime ifconfig cuando hay cable,
+                # y esa palabra no la traduce el sistema.
+                estado="$(ifconfig "$n" 2>/dev/null | awk '/status:/{print $2}' | head -1)"
+                estado="${estado:-?}"
+                [[ "$estado" == "active" ]] && cable="con cable" || cable="sin cable"
+            else
+                estado="$(cat "/sys/class/net/$n/operstate" 2>/dev/null || echo '?')"
+                cable="$(cat "/sys/class/net/$n/carrier" 2>/dev/null || echo '0')"
+                [[ "$cable" == "1" ]] && cable="con cable" || cable="sin cable"
+            fi
             printf '     · %-12s %s, %s\n' "$n" "$estado" "$cable"
         done
         elegida="$(preguntar "   ¿En cuál se enchufan los routers? [${candidatas[0]}]: ")"
@@ -242,18 +280,18 @@ info "Comprobando el entorno."
 "$BIN" --config "$CONFIG" selftest || morir "El agente quedó instalado pero el selftest falló. Revisa lo anterior."
 
 info "Arrancando el servicio."
-systemctl enable --now "$UNIT" >/dev/null 2>&1 || morir "No se pudo arrancar el servicio."
+ispgestor-agent-service enable "$INSTANCIA" || morir "No se pudo arrancar el servicio."
 
 sleep 3
-if systemctl is-active --quiet "$UNIT"; then
+if ispgestor-agent-service is-active "$INSTANCIA"; then
     echo
     verde "✓ Listo. El agente '${AGENT_NAME}' está instalado, enrolado y corriendo."
     echo "   Ya debería aparecer en línea en el panel, en Red → Agentes."
     echo
-    echo "   Ver el registro:  journalctl -u ${UNIT} -f"
+    echo "   Ver el registro:  $(ispgestor-agent-service log-hint "$INSTANCIA")"
 else
     echo
     rojo "El servicio no quedó activo. Mira qué pasó con:"
-    echo "   journalctl -u ${UNIT} -n 50 --no-pager"
+    echo "   $(ispgestor-agent-service log-hint "$INSTANCIA")"
     exit 1
 fi

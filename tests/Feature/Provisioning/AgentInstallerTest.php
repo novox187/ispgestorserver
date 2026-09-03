@@ -13,9 +13,15 @@ uses(RefreshDatabase::class);
  * Lo que se protege aquí es que la comodidad no se coma la seguridad: la URL
  * tiene que exigir firma, caducar, y no llevar nunca el token en claro.
  */
-function urlInstalador(ProvisioningAgent $agent, ?int $minutos = 30): string
+function urlInstalador(ProvisioningAgent $agent, ?int $minutos = 30, ?string $plataforma = null): string
 {
-    return URL::temporarySignedRoute('agent.installer', now()->addMinutes($minutos), ['id' => $agent->id]);
+    $params = ['id' => $agent->id];
+
+    if ($plataforma !== null) {
+        $params['platform'] = $plataforma;
+    }
+
+    return URL::temporarySignedRoute('agent.installer', now()->addMinutes($minutos), $params);
 }
 
 function agenteDePrueba(string $role = 'provisioner'): ProvisioningAgent
@@ -80,6 +86,125 @@ it('incrusta el agente entero, no una referencia a otra descarga', function () {
         ->toContain('ispgestor_agent/__main__.py');
 });
 
+// ── Plataformas ──────────────────────────────────────────────────────────────
+
+it('entrega un script de PowerShell cuando se pide Windows', function () {
+    // El provisioner tiene que estar donde se enchufan los routers, y eso suele
+    // ser un PC de oficina con Windows. Entregarle bash ahí no sirve de nada.
+    $res = $this->get(urlInstalador(agenteDePrueba('provisioner'), 30, 'windows'));
+    $script = $res->getContent();
+
+    $res->assertOk()
+        ->assertHeader('content-disposition', 'attachment; filename="instalar-agente-provisioner.ps1"');
+
+    expect($script)->toContain('$ErrorActionPreference')
+        ->toContain('Register-ScheduledTask')
+        // Y NO debe llevar nada de bash ni de systemd.
+        ->not->toContain('#!/usr/bin/env bash')
+        ->not->toContain('systemctl');
+});
+
+it('el instalador de Windows exige permisos de administrador', function () {
+    // Crea servicios y escribe en Program Files: sin esto fallaría a mitad,
+    // dejando el agente instalado pero sin arrancar.
+    $script = $this->get(urlInstalador(agenteDePrueba('provisioner'), 30, 'windows'))->getContent();
+
+    expect($script)->toContain('WindowsBuiltInRole]::Administrator');
+});
+
+it('el instalador de Windows protege el secreto con SID y no con nombres', function () {
+    // En un Windows en español el grupo se llama «Administradores»: una ACL
+    // escrita contra el nombre inglés falla justo en la máquina del cliente.
+    $script = $this->get(urlInstalador(agenteDePrueba('provisioner'), 30, 'windows'))->getContent();
+
+    expect($script)->toContain('/inheritance:r')
+        ->toContain('S-1-5-32-544')
+        ->toContain('S-1-5-18');
+});
+
+it('sin plataforma sigue entregando el script de Unix', function () {
+    // Compatibilidad: los enlaces ya generados no llevan el parámetro.
+    $script = $this->get(urlInstalador(agenteDePrueba('provisioner')))->getContent();
+
+    expect($script)->toStartWith('#!/usr/bin/env bash');
+});
+
+it('una plataforma inventada degrada a Unix en vez de fallar', function () {
+    $res = $this->get(urlInstalador(agenteDePrueba('provisioner'), 30, 'atari'));
+
+    $res->assertOk();
+    expect($res->getContent())->toStartWith('#!/usr/bin/env bash');
+});
+
+it('el script de Unix sirve para Linux y para macOS', function () {
+    // Un solo script: comparten rutas, permisos y venv. Lo único que difiere
+    // —systemd frente a launchd— lo resuelve el paquete.
+    $script = $this->get(urlInstalador(agenteDePrueba('provisioner')))->getContent();
+
+    expect($script)->toContain('Darwin')
+        ->toContain('ispgestor-agent-service')
+        // Ya no debe invocar systemd directamente en ningún sitio.
+        ->not->toContain('systemctl enable');
+});
+
+it('el paquete lleva la capa de servicio y el plist de launchd', function () {
+    // `install.sh` los copia sin condiciones: si faltan, la instalación aborta
+    // en el `cp` y el fallo solo se ve en la máquina del cliente.
+    $script = $this->get(urlInstalador(agenteDePrueba()))->getContent();
+
+    preg_match("/<<'PAYLOAD_B64'[^\\n]*\\n(.*?)\\nPAYLOAD_B64/s", $script, $m);
+    $tmp = tempnam(sys_get_temp_dir(), 'zip');
+    file_put_contents($tmp, base64_decode(preg_replace('/\s+/', '', $m[1] ?? ''), true));
+
+    $zip = new ZipArchive();
+    $zip->open($tmp);
+    $nombres = [];
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $nombres[] = $zip->getNameIndex($i);
+    }
+    $zip->close();
+    @unlink($tmp);
+
+    expect($nombres)->toContain('ispgestor-agent-service')
+        ->toContain('uk.ironlink.ispgestor-agent.plist');
+});
+
+it('no ofrece Windows ni macOS para el rol vpn_host', function () {
+    // Administra el WireGuard del hosting, que es Linux por definición.
+    // Ofrecerlo sería ofrecer algo que falla al ejecutarse.
+    $admin = makeSuperAdminEmployee();
+    Sanctum::actingAs($admin, ['*']);
+
+    $res = $this->postJson('/api/admin/provisioning/agents', [
+        'name' => 'VPN Host', 'role' => 'vpn_host',
+    ])->assertStatus(201);
+
+    $ordenes = $res->json('data.installer_commands');
+
+    expect($ordenes)->toHaveKey('linux')
+        ->and($ordenes)->not->toHaveKey('windows')
+        ->and($ordenes)->not->toHaveKey('macos');
+});
+
+it('el panel entrega una orden por plataforma para el provisioner', function () {
+    $admin = makeSuperAdminEmployee();
+    Sanctum::actingAs($admin, ['*']);
+
+    $res = $this->postJson('/api/admin/provisioning/agents', [
+        'name' => 'Oficina', 'role' => 'provisioner',
+    ])->assertStatus(201);
+
+    $ordenes = $res->json('data.installer_commands');
+
+    expect($ordenes['linux'])->toContain('curl -fsSL')
+        ->and($ordenes['macos'])->toContain('curl -fsSL')
+        // En Windows se guarda y se ejecuta aparte: `irm | iex` no puede leer
+        // del teclado, y el instalador pregunta qué tarjeta vigilar.
+        ->and($ordenes['windows'])->toContain('irm ')
+        ->and($ordenes['windows'])->toContain('platform=windows')
+        ->and($ordenes['windows'])->not->toContain('| iex');
+});
+
 it('el instalador de un monitor pregunta qué rangos podrá barrer', function () {
     // Sin `--scannable` la lista queda vacía, que significa «no barrer nada»:
     // el agente se instalaría bien y rechazaría todos los barridos.
@@ -95,7 +220,7 @@ it('el instalador no pisa a un agente de otro rol en la misma máquina', functio
     // primero y lo dejaba fuera en silencio.
     $script = $this->get(urlInstalador(agenteDePrueba('monitor')))->getContent();
 
-    expect($script)->toContain('ispgestor-agent@${ROLE}')
+    expect($script)->toContain('INSTANCIA="$ROLE"')
         ->toContain('${CONFIG_DIR}/${ROLE}.conf')
         // Y el enrolamiento tiene que apuntar a ESE fichero, no al de siempre.
         ->toContain('"$BIN" --config "$CONFIG" enroll');

@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+#
+# Gobierna el demonio del agente sin que quien llama tenga que saber si debajo
+# hay systemd o launchd.
+#
+# Existe porque el instalador desatendido es el mismo script en Linux y en
+# macOS, y las órdenes no se parecen en nada: `systemctl enable --now X` frente
+# a generar un plist y hacerle `launchctl bootstrap`. Meter esa bifurcación en
+# el instalador lo habría llenado de condicionales en cada paso.
+#
+#   ispgestor-agent-service enable <instancia>
+#   ispgestor-agent-service stop <instancia>
+#   ispgestor-agent-service is-active <instancia>     # solo código de salida
+#   ispgestor-agent-service log-hint <instancia>      # qué teclear para ver el log
+#
+# `<instancia>` es «agent» para la instalación de siempre, o el rol cuando hay
+# más de un agente en la misma máquina.
+set -euo pipefail
+
+PREFIX=/opt/ispgestor-agent
+LAUNCH_DAEMONS=/Library/LaunchDaemons
+ETIQUETA_BASE=uk.ironlink.ispgestor-agent
+
+ACCION="${1:-}"
+INSTANCIA="${2:-agent}"
+
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    SISTEMA=macos
+else
+    SISTEMA=linux
+fi
+
+# En systemd la instalación de siempre usa la unidad simple y el resto la
+# plantilla. En launchd cada instancia es un plist con su propia etiqueta.
+if [[ "$INSTANCIA" == "agent" ]]; then
+    UNIDAD=ispgestor-agent
+else
+    UNIDAD="ispgestor-agent@${INSTANCIA}"
+fi
+
+ETIQUETA="${ETIQUETA_BASE}.${INSTANCIA}"
+PLIST="${LAUNCH_DAEMONS}/${ETIQUETA}.plist"
+
+generar_plist() {
+    local plantilla="${PREFIX}/plantillas/${ETIQUETA_BASE}.plist"
+
+    [[ -f "$plantilla" ]] || { echo "Falta la plantilla del demonio en ${plantilla}." >&2; exit 1; }
+
+    sed "s|__INSTANCIA__|${INSTANCIA}|g" "$plantilla" > "$PLIST"
+    # root:wheel y 0644 no es cosmético: launchd se niega a cargar un plist de
+    # LaunchDaemons que sea escribible por otros, y el error que da no dice por
+    # qué.
+    chown root:wheel "$PLIST"
+    chmod 644 "$PLIST"
+}
+
+case "$ACCION" in
+    enable)
+        if [[ "$SISTEMA" == "macos" ]]; then
+            generar_plist
+            # `bootout` antes de `bootstrap` para que reinstalar no falle con
+            # «service already loaded». Se ignora el error de la primera vez.
+            launchctl bootout "system/${ETIQUETA}" 2>/dev/null || true
+            launchctl bootstrap system "$PLIST"
+        else
+            systemctl enable --now "$UNIDAD" >/dev/null 2>&1
+        fi
+        ;;
+
+    stop)
+        if [[ "$SISTEMA" == "macos" ]]; then
+            launchctl bootout "system/${ETIQUETA}" 2>/dev/null || true
+        else
+            systemctl stop "$UNIDAD" 2>/dev/null || true
+        fi
+        ;;
+
+    is-active)
+        if [[ "$SISTEMA" == "macos" ]]; then
+            # `launchctl print` falla si el servicio no está cargado. Cargado
+            # pero muerto en bucle daría PID vacío, así que se exige el PID.
+            launchctl print "system/${ETIQUETA}" 2>/dev/null | grep -qE '^\s*pid = [0-9]+'
+        else
+            systemctl is-active --quiet "$UNIDAD"
+        fi
+        ;;
+
+    log-hint)
+        if [[ "$SISTEMA" == "macos" ]]; then
+            echo "tail -f /var/log/ispgestor-agent.${INSTANCIA}.log"
+        else
+            echo "journalctl -u ${UNIDAD} -f"
+        fi
+        ;;
+
+    *)
+        echo "Uso: $0 {enable|stop|is-active|log-hint} [instancia]" >&2
+        exit 2
+        ;;
+esac

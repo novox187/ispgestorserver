@@ -10,10 +10,40 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
+import sys
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
-DEFAULT_PATH = Path("/etc/ispgestor-agent/agent.conf")
+#: Cierto en Windows. Se consulta bastante: allí no hay bits de modo Unix y el
+#: fichero se protege con ACL, que es otro mecanismo con otras órdenes.
+IS_WINDOWS = sys.platform == "win32"
+
+#: SID de `NT AUTHORITY\SYSTEM` y del grupo de administradores locales.
+#:
+#: Se usan los SID y no los nombres a propósito: en un Windows en español el
+#: grupo se llama «Administradores», y una ACL escrita contra el nombre inglés
+#: fallaría en la máquina del cliente —que es justo donde nadie va a mirar—.
+WINDOWS_SIDS = ("*S-1-5-18", "*S-1-5-32-544")
+
+
+def default_config_path() -> Path:
+    """Dónde vive la configuración en esta plataforma.
+
+    En Windows no existe `/etc`, y `%ProgramData%` es el sitio previsto para
+    datos de una aplicación que no son de un usuario concreto —que es el caso:
+    el agente corre como servicio del sistema—.
+    """
+    if IS_WINDOWS:
+        base = os.environ.get("ProgramData") or r"C:\ProgramData"
+        return Path(base) / "ispgestor-agent" / "agent.conf"
+
+    # Linux y macOS. En macOS `/etc` es un enlace a `/private/etc` y funciona
+    # igual, así que no hace falta distinguirlos.
+    return Path("/etc/ispgestor-agent/agent.conf")
+
+
+DEFAULT_PATH = default_config_path()
 
 
 class ConfigError(RuntimeError):
@@ -121,10 +151,39 @@ def save(config: AgentConfig, path: Path | None = None) -> None:
 
     # Se crea con 0600 desde el principio y no se relaja después: escribir y
     # luego hacer chmod deja una ventana en la que el secreto es legible.
+    #
+    # En Windows estos bits no hacen nada —el control de acceso va por ACL— así
+    # que allí se restringe aparte, en cuanto el fichero existe.
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         json.dump(asdict(config), handle, indent=2, ensure_ascii=False)
         handle.write("\n")
+
+    if IS_WINDOWS:
+        _restrict_windows_acl(path)
+
+
+def _restrict_windows_acl(path: Path) -> None:
+    """Deja el fichero accesible solo a SYSTEM y a los administradores.
+
+    `/inheritance:r` es la parte que importa: sin ella el fichero hereda los
+    permisos de `%ProgramData%`, donde el grupo «Usuarios» tiene lectura. Es
+    decir, sin esta llamada el secreto HMAC con el que el agente firma sus
+    peticiones lo podría leer cualquier cuenta de la máquina.
+
+    Si `icacls` falla no se aborta el enrolamiento —el agente ya está enrolado y
+    el fichero escrito—, pero `check_permissions` lo detectará y avisará en cada
+    arranque, que es la forma de que no pase desapercibido.
+    """
+    try:
+        subprocess.run(
+            ["icacls", str(path), "/inheritance:r", *[f"/grant:r{sid}:F" for sid in WINDOWS_SIDS]],
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def check_permissions(path: Path | None = None) -> str | None:
@@ -134,11 +193,60 @@ def check_permissions(path: Path | None = None) -> str | None:
     if not path.exists():
         return None
 
+    if IS_WINDOWS:
+        return _check_windows_acl(path)
+
     mode = path.stat().st_mode
     if mode & (stat.S_IRGRP | stat.S_IROTH | stat.S_IWGRP | stat.S_IWOTH):
         return (
             f"{path} es accesible por otros usuarios ({oct(stat.S_IMODE(mode))}). "
             f"Corrígelo con: chmod 600 {path}"
         )
+
+    return None
+
+
+def _check_windows_acl(path: Path) -> str | None:
+    """Comprueba la ACL en Windows en vez de los bits de modo.
+
+    Los bits de modo en Windows son sintéticos: Python los inventa a partir del
+    atributo de solo lectura. La comprobación de Unix, aplicada aquí, avisaría
+    siempre de que el fichero «es accesible por otros usuarios» y recomendaría
+    `chmod`, que no existe — un aviso permanente e imposible de resolver sobre
+    justo el fichero que guarda el secreto.
+    """
+    try:
+        salida = subprocess.run(
+            ["icacls", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        # Sin `icacls` no se puede afirmar que esté bien ni que esté mal. Se
+        # dice lo segundo: callar aquí sería dar por segura una protección que
+        # no se ha comprobado.
+        return (
+            f"No se pudo comprobar quién puede leer {path}: falta «icacls». "
+            f"Revísalo a mano, porque ahí vive el secreto del agente."
+        )
+
+    # Se buscan por SID los principales que NO deberían tener acceso: el grupo
+    # «Usuarios» (S-1-5-32-545), «Todos» (S-1-1-0) y «Usuarios autenticados»
+    # (S-1-5-11). Por SID y no por nombre, que está traducido.
+    peligrosos = {
+        "S-1-5-32-545": "el grupo Usuarios",
+        "S-1-1-0": "Todos",
+        "S-1-5-11": "los usuarios autenticados",
+    }
+
+    for sid, descripcion in peligrosos.items():
+        if sid in salida:
+            return (
+                f"{path} lo puede leer {descripcion}, y ahí vive el secreto del agente. "
+                f"Corrígelo con: icacls \"{path}\" /inheritance:r "
+                f"/grant:r*S-1-5-18:F /grant:r*S-1-5-32-544:F"
+            )
 
     return None

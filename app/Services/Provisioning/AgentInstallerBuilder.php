@@ -22,15 +22,36 @@ use ZipArchive;
  */
 class AgentInstallerBuilder
 {
+    /**
+     * Un solo script para Linux y macOS: comparten rutas, permisos y entorno
+     * virtual, y lo único que se separa —systemd frente a launchd— lo resuelve
+     * `ispgestor-agent-service` dentro del propio paquete.
+     */
+    public const UNIX = 'unix';
+
+    /** Windows necesita otro script entero: PowerShell y tarea programada. */
+    public const WINDOWS = 'windows';
+
+    private const PLANTILLAS = [
+        self::UNIX    => 'resources/provisioning/installer.sh',
+        self::WINDOWS => 'resources/provisioning/installer.ps1',
+    ];
+
     /** Ficheros y carpetas del agente que se empaquetan. */
     private const INCLUIR = [
         'ispgestor_agent',
         'install.sh',
+        // Capa que traduce «arranca esto» a systemd o a launchd, para que el
+        // instalador desatendido sea el mismo script en Linux y en macOS.
+        'ispgestor-agent-service',
         'ispgestor-agent.service',
         // La unidad plantilla permite un agente por rol en la misma máquina.
         // `install.sh` la copia siempre, así que si falta aquí la instalación
         // aborta en el `cp` — y solo se vería en la máquina del cliente.
         'ispgestor-agent@.service',
+        // launchd no tiene unidades con plantilla: el modelo del plist viaja y
+        // se instancia al arrancar cada agente.
+        'uk.ironlink.ispgestor-agent.plist',
         'requirements.txt',
         'README.md',
     ];
@@ -45,9 +66,9 @@ class AgentInstallerBuilder
      * @param string $token Token de enrolamiento en claro. Solo existe en este
      *                      momento: en la fila queda únicamente su hash.
      */
-    public function build(ProvisioningAgent $agent, string $token): string
+    public function build(ProvisioningAgent $agent, string $token, string $platform = self::UNIX): string
     {
-        $plantilla = base_path('resources/provisioning/installer.sh');
+        $plantilla = base_path(self::PLANTILLAS[$platform] ?? self::PLANTILLAS[self::UNIX]);
 
         if (!is_readable($plantilla)) {
             throw new RuntimeException('No se encuentra la plantilla del instalador.');
@@ -69,11 +90,18 @@ class AgentInstallerBuilder
     }
 
     /** Nombre del fichero que se ofrece al descargar. */
-    public function filename(ProvisioningAgent $agent): string
+    public function filename(ProvisioningAgent $agent, string $platform = self::UNIX): string
     {
         $slug = preg_replace('/[^a-z0-9]+/i', '-', $agent->name) ?: 'agente';
+        $extension = $platform === self::WINDOWS ? '.ps1' : '.sh';
 
-        return 'instalar-' . strtolower(trim($slug, '-')) . '.sh';
+        return 'instalar-' . strtolower(trim($slug, '-')) . $extension;
+    }
+
+    /** ¿Es una plataforma para la que hay instalador? */
+    public static function soporta(string $platform): bool
+    {
+        return isset(self::PLANTILLAS[$platform]);
     }
 
     /**

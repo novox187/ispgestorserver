@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Demonio de launchd para macOS: el equivalente de la unidad de systemd.
+
+    `__INSTANCIA__` la sustituye `install.sh` al copiar el fichero, igual que
+    systemd resuelve `%i` en la unidad plantilla. Aquí no hay plantillas, así
+    que se genera un plist por instancia con su propia etiqueta y su propia
+    ruta de configuración.
+
+    Va en /Library/LaunchDaemons y no en LaunchAgents porque tiene que correr
+    como root y sin que nadie inicie sesión: el `provisioner` abre sockets y
+    lee el estado de las NIC, y la oficina puede tener el equipo encendido con
+    la sesión cerrada.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>uk.ironlink.ispgestor-agent.__INSTANCIA__</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/ispgestor-agent/venv/bin/python</string>
+        <string>-m</string>
+        <string>ispgestor_agent</string>
+        <string>--config</string>
+        <string>/etc/ispgestor-agent/__INSTANCIA__.conf</string>
+        <string>run</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/opt/ispgestor-agent</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!--
+        El equivalente de Restart=always. Sin esto, un agente que muere deja de
+        detectar equipos en silencio, que es el fallo más difícil de notar:
+        nada se rompe, simplemente no pasa nada nunca.
+    -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Se espera antes de reintentar, como RestartSec. Por debajo de 10 s
+         launchd empieza a limitar los arranques por su cuenta. -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/ispgestor-agent.__INSTANCIA__.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/ispgestor-agent.__INSTANCIA__.log</string>
+</dict>
+</plist>

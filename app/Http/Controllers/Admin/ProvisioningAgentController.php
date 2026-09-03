@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Enums\AgentRole;
 use App\Http\Controllers\Controller;
 use App\Models\ProvisioningAgent;
+use App\Services\Provisioning\AgentInstallerBuilder;
 use App\Services\Provisioning\ProvisioningAuditor;
 use App\Support\PasswordConfirmation;
 use Illuminate\Http\JsonResponse;
@@ -65,6 +66,7 @@ class ProvisioningAgentController extends Controller
                 'enrollment_expires' => $agent->enrollment_expires_at?->toIso8601String(),
                 'enroll_command'     => $this->enrollCommand($token),
                 'installer_command'  => $this->installerCommand($agent),
+                'installer_commands' => $this->installerCommands($agent),
             ]),
         ], 201);
     }
@@ -89,6 +91,7 @@ class ProvisioningAgentController extends Controller
                 'enrollment_expires' => $agent->enrollment_expires_at?->toIso8601String(),
                 'enroll_command'     => $this->enrollCommand($token),
                 'installer_command'  => $this->installerCommand($agent),
+                'installer_commands' => $this->installerCommands($agent),
             ]),
         ]);
     }
@@ -177,12 +180,51 @@ class ProvisioningAgentController extends Controller
      */
     private function installerCommand(ProvisioningAgent $agent): string
     {
-        $url = URL::temporarySignedRoute(
+        return $this->installerCommands($agent)['linux'];
+    }
+
+    /**
+     * Una orden por plataforma. El agente corre en las tres.
+     *
+     * Se entregan todas y no solo la que el panel adivine, porque quien registra
+     * el agente en el panel no es necesariamente quien lo va a instalar: lo
+     * habitual es copiar la orden y mandársela a alguien que está delante de la
+     * máquina, en la oficina, y esa máquina puede ser cualquiera de las tres.
+     *
+     * `vpn_host` se queda fuera de Windows y macOS: administra el WireGuard del
+     * hosting, que es Linux por definición. Ofrecerlo sería ofrecer algo que
+     * falla al ejecutarse.
+     *
+     * @return array<string, string>
+     */
+    private function installerCommands(ProvisioningAgent $agent): array
+    {
+        $unix    = $this->installerUrl($agent, AgentInstallerBuilder::UNIX);
+        $windows = $this->installerUrl($agent, AgentInstallerBuilder::WINDOWS);
+
+        $ordenes = [
+            'linux' => "curl -fsSL \"{$unix}\" | sudo bash",
+        ];
+
+        if ($agent->role !== AgentRole::VPN_HOST) {
+            // En macOS el mismo script; lo que cambia (launchd en vez de
+            // systemd) lo resuelve el propio paquete.
+            $ordenes['macos'] = "curl -fsSL \"{$unix}\" | sudo bash";
+            // PowerShell como administrador. `iex` no puede leer del teclado si
+            // el script pregunta algo, así que se guarda y se ejecuta aparte.
+            $ordenes['windows'] = "irm \"{$windows}\" -OutFile \$env:TEMP\\instalar-agente.ps1; "
+                . "& \$env:TEMP\\instalar-agente.ps1";
+        }
+
+        return $ordenes;
+    }
+
+    private function installerUrl(ProvisioningAgent $agent, string $platform): string
+    {
+        return URL::temporarySignedRoute(
             'agent.installer',
             now()->addMinutes(ProvisioningAgent::ENROLLMENT_TTL_MINUTES),
-            ['id' => $agent->id]
+            ['id' => $agent->id, 'platform' => $platform]
         );
-
-        return "curl -fsSL \"{$url}\" | sudo bash";
     }
 }

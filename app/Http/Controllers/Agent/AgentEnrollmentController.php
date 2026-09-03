@@ -50,9 +50,20 @@ class AgentEnrollmentController extends Controller
      * descargar dos veces deja muerto el primer script, y que hacerlo sobre un
      * agente ya enrolado lo desconecta — por eso queda auditado.
      */
-    public function installer(int $id, AgentInstallerBuilder $builder): Response
+    public function installer(Request $request, int $id, AgentInstallerBuilder $builder): Response
     {
         $agent = ProvisioningAgent::findOrFail($id);
+
+        // La plataforma decide qué script se entrega. Se acepta lo que venga y
+        // se degrada a Unix ante cualquier valor raro: la URL va firmada, así
+        // que un valor manipulado solo consigue el instalador equivocado para
+        // el mismo agente —no hay nada que ganar—, pero tampoco tiene sentido
+        // fallar con un 422 sobre algo que se puede resolver con un defecto.
+        $platform = (string) $request->query('platform', AgentInstallerBuilder::UNIX);
+
+        if (!AgentInstallerBuilder::soporta($platform)) {
+            $platform = AgentInstallerBuilder::UNIX;
+        }
 
         $yaEnrolado = $agent->enrolled_at !== null;
         $token      = $agent->issueEnrollmentToken();
@@ -61,11 +72,17 @@ class AgentEnrollmentController extends Controller
             'reason' => $yaEnrolado
                 ? 'Se descargó el instalador: se emitió un token nuevo y las credenciales anteriores quedan inválidas.'
                 : 'Se descargó el instalador y se emitió su token de enrolamiento.',
+            'platform' => $platform,
         ]);
 
-        return response($builder->build($agent, $token), 200, [
-            'Content-Type'        => 'text/x-shellscript; charset=utf-8',
-            'Content-Disposition' => 'attachment; filename="' . $builder->filename($agent) . '"',
+        return response($builder->build($agent, $token, $platform), 200, [
+            // PowerShell no mira el tipo, pero un navegador que abra el enlace
+            // sí: con `text/plain` lo enseñaría en pantalla, con el token
+            // dentro, en el historial y en la caché del navegador.
+            'Content-Type' => $platform === AgentInstallerBuilder::WINDOWS
+                ? 'text/plain; charset=utf-8'
+                : 'text/x-shellscript; charset=utf-8',
+            'Content-Disposition' => 'attachment; filename="' . $builder->filename($agent, $platform) . '"',
             // El script lleva un token de un solo uso: no debe quedar en ninguna
             // caché intermedia.
             'Cache-Control'       => 'no-store, no-cache, must-revalidate',

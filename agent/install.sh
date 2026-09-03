@@ -20,7 +20,17 @@ PREFIX=/opt/ispgestor-agent
 CONFIG_DIR=/etc/ispgestor-agent
 SERVICE=/etc/systemd/system/ispgestor-agent.service
 SERVICE_TEMPLATE=/etc/systemd/system/ispgestor-agent@.service
+LAUNCH_DAEMONS=/Library/LaunchDaemons
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# macOS es Unix y comparte casi todo —rutas, permisos, el entorno virtual—,
+# pero no tiene systemd: los demonios los gobierna launchd, con un plist por
+# servicio en lugar de unidades con plantilla.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    SISTEMA=macos
+else
+    SISTEMA=linux
+fi
 
 if [[ $EUID -ne 0 ]]; then
     echo "Este instalador necesita privilegios de root." >&2
@@ -39,6 +49,14 @@ if ! python3 -c 'import ensurepip' >/dev/null 2>&1; then
         DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
         DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "python${PYVER}-venv" \
             || { echo "No se pudo instalar python${PYVER}-venv." >&2; exit 1; }
+    elif [[ "$SISTEMA" == "macos" ]]; then
+        # El python3 de las Herramientas de Línea de Comandos de Apple sí trae
+        # ensurepip. Si falta, lo habitual es que python3 sea un enlace roto o
+        # una instalación a medias, y eso no lo puede arreglar el instalador.
+        echo "El python3 de este Mac no puede crear entornos virtuales." >&2
+        echo "Instala las herramientas de desarrollo con: xcode-select --install" >&2
+        echo "o Python desde python.org, y vuelve a ejecutar esto." >&2
+        exit 1
     else
         echo "Falta ensurepip y no hay apt-get; instala el paquete venv de tu distribución." >&2
         exit 1
@@ -64,14 +82,23 @@ echo "==> Creando ${CONFIG_DIR}"
 mkdir -p "${CONFIG_DIR}"
 chmod 700 "${CONFIG_DIR}"
 
-echo "==> Instalando las unidades de systemd"
-cp "${SOURCE_DIR}/ispgestor-agent.service" "${SERVICE}"
-# La plantilla permite un agente por rol en la misma máquina
-# (`ispgestor-agent@monitor`, con /etc/ispgestor-agent/monitor.conf). Se instala
-# siempre aunque no se use: no arranca nada por sí sola y evita tener que volver
-# a copiar ficheros el día que a un host le haga falta un segundo rol.
-cp "${SOURCE_DIR}/ispgestor-agent@.service" "${SERVICE_TEMPLATE}"
-systemctl daemon-reload
+if [[ "$SISTEMA" == "macos" ]]; then
+    echo "==> Preparando el demonio de launchd"
+    # launchd no tiene plantillas: se genera un plist por instancia al
+    # arrancarla. Aquí solo se deja el modelo del que saldrán.
+    mkdir -p "${PREFIX}/plantillas"
+    cp "${SOURCE_DIR}/uk.ironlink.ispgestor-agent.plist" "${PREFIX}/plantillas/"
+else
+    echo "==> Instalando las unidades de systemd"
+    cp "${SOURCE_DIR}/ispgestor-agent.service" "${SERVICE}"
+    # La plantilla permite un agente por rol en la misma máquina
+    # (`ispgestor-agent@monitor`, con /etc/ispgestor-agent/monitor.conf). Se
+    # instala siempre aunque no se use: no arranca nada por sí sola y evita
+    # tener que volver a copiar ficheros el día que a un host le haga falta un
+    # segundo rol.
+    cp "${SOURCE_DIR}/ispgestor-agent@.service" "${SERVICE_TEMPLATE}"
+    systemctl daemon-reload
+fi
 
 echo "==> Atajo en /usr/local/bin/ispgestor-agent"
 # PYTHONPATH explícito y no un `cd`: sin él, `python -m` solo encuentra el
@@ -84,6 +111,10 @@ cat > /usr/local/bin/ispgestor-agent <<EOF
 exec env PYTHONPATH="${PREFIX}" ${PREFIX}/venv/bin/python -m ispgestor_agent "\$@"
 EOF
 chmod 755 /usr/local/bin/ispgestor-agent
+
+# Capa que abstrae systemd y launchd, para que el instalador desatendido sea el
+# mismo script en Linux y en macOS.
+install -m 755 "${SOURCE_DIR}/ispgestor-agent-service" /usr/local/bin/ispgestor-agent-service
 
 cat <<'EOF'
 
