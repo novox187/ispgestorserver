@@ -201,6 +201,33 @@ it('acepta el firmware largo de airOS sin tirar el barrido entero', function () 
         ->and(NetworkScanFinding::where('ip_address', '10.10.10.18')->value('firmware'))->toBe($firmware);
 });
 
+it('reconoce los OUI del parque real de Ubiquiti y MikroTik', function () {
+    // La tabla de OUI se quedó corta: en el primer barrido real, 11 de 25
+    // equipos salieron sin fabricante —y sin fabricante no se puede proponer
+    // driver al adoptarlos—. Todas estas MAC son de equipos que existen.
+    pedirBarrido();
+    $scan = NetworkScan::first();
+
+    reportarBarrido($this->agent, $scan->id, [
+        'status'   => 'completed',
+        'findings' => [
+            // Ubiquiti: LiteBeam M5 y PowerBeam 5AC 620.
+            ['ip_address' => '10.10.10.57',  'mac_address' => '74:AC:B9:82:20:52'],
+            ['ip_address' => '10.10.10.247', 'mac_address' => 'F4:92:BF:BA:8C:43'],
+            // MikroTik: OmniTIK U-5HnD y CCR1009.
+            ['ip_address' => '10.10.10.252', 'mac_address' => '00:0C:42:DC:FA:72'],
+            ['ip_address' => '10.10.10.1',   'mac_address' => '08:55:31:D0:F0:C9'],
+        ],
+    ])->assertOk();
+
+    $vendor = fn (string $ip) => NetworkScanFinding::where('ip_address', $ip)->value('vendor');
+
+    expect($vendor('10.10.10.57'))->toBe('ubiquiti')
+        ->and($vendor('10.10.10.247'))->toBe('ubiquiti')
+        ->and($vendor('10.10.10.252'))->toBe('mikrotik')
+        ->and($vendor('10.10.10.1'))->toBe('mikrotik');
+});
+
 // ── Adopción ─────────────────────────────────────────────────────────────────
 
 it('convierte un hallazgo en un equipo del inventario', function () {

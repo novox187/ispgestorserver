@@ -46,16 +46,23 @@ enum DeviceVendor: string
         return match ($this) {
             // MikroTikls SIA
             self::MIKROTIK => [
-                '18:FD:74', '2C:C8:1B', '48:8F:5A', '4C:5E:0C', '64:D1:54',
-                '6C:3B:6B', '74:4D:28', '78:9A:18', '7C:2F:80', 'B8:69:F4',
-                'CC:2D:E0', 'D4:CA:6D', 'DC:2C:6E', 'E4:8D:8C', 'F4:1E:57',
+                // 00:0C:42 es el OUI clásico de RouterBOARD y 08:55:31 el de los
+                // CCR recientes: faltaban los dos, y entre ambos cubren buena
+                // parte de un parque real.
+                '00:0C:42', '08:55:31', '18:FD:74', '2C:C8:1B', '48:8F:5A',
+                '4C:5E:0C', '64:D1:54', '6C:3B:6B', '74:4D:28', '78:9A:18',
+                '7C:2F:80', 'B8:69:F4', 'CC:2D:E0', 'D4:CA:6D', 'DC:2C:6E',
+                'E4:8D:8C', 'F4:1E:57',
             ],
             // Ubiquiti Inc. / Ubiquiti Networks
             self::UBIQUITI => [
                 '00:15:6D', '00:27:22', '04:18:D6', '18:E8:29', '24:A4:3C',
                 '44:D9:E7', '60:22:32', '68:72:51', '70:A7:41', '74:83:C2',
-                '78:8A:20', '80:2A:A8', '94:2A:6F', 'AC:8B:A9', 'B4:FB:E4',
-                'DC:9F:DB', 'E0:63:DA', 'F0:9F:C2', 'FC:EC:DA',
+                // 74:AC:B9 (LiteBeam M5) y F4:92:BF (PowerBeam, NanoStation M2)
+                // se llevaban 11 de los 25 equipos del primer barrido real.
+                '74:AC:B9', '78:8A:20', '80:2A:A8', '94:2A:6F', 'AC:8B:A9',
+                'B4:FB:E4', 'DC:9F:DB', 'E0:63:DA', 'F0:9F:C2', 'F4:92:BF',
+                'FC:EC:DA',
             ],
         };
     }
