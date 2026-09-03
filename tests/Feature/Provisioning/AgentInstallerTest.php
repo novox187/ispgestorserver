@@ -213,6 +213,40 @@ it('el paquete lleva la capa de servicio y el plist de launchd', function () {
         ->toContain('uk.ironlink.ispgestor-agent.plist');
 });
 
+it('las unidades no exigen rutas que solo existen en el hosting', function () {
+    // `ReadWritePaths` sin el prefijo `-` obliga a que la ruta exista: si falta,
+    // systemd se niega a montar el espacio de nombres y mata el proceso antes de
+    // arrancarlo (status=226/NAMESPACE).
+    //
+    // Pasó de verdad: `/etc/wireguard` solo existe en el `vpn_host`, así que en
+    // la máquina de una oficina —un `provisioner`— el agente entraba en bucle de
+    // reinicio nada más instalarse. No se vio en el hosting porque allí sí
+    // existe, y es donde se había probado.
+    $unidades = [
+        base_path('agent/ispgestor-agent.service'),
+        base_path('agent/ispgestor-agent@.service'),
+    ];
+
+    foreach ($unidades as $unidad) {
+        preg_match('/^ReadWritePaths=(.+)$/m', (string) file_get_contents($unidad), $m);
+
+        expect($m[1] ?? '')->not->toBeEmpty("«{$unidad}» no declara ReadWritePaths");
+
+        foreach (preg_split('/\s+/', trim($m[1])) as $ruta) {
+            // La única que el instalador garantiza es la suya, porque la crea él.
+            if ($ruta === '/etc/ispgestor-agent') {
+                continue;
+            }
+
+            expect($ruta)->toStartWith(
+                '-',
+                "«{$ruta}» en " . basename($unidad) . ' tiene que llevar el prefijo «-»: '
+                . 'si no existe en la máquina destino, el servicio no arranca.'
+            );
+        }
+    }
+});
+
 it('no ofrece Windows ni macOS para el rol vpn_host', function () {
     // Administra el WireGuard del hosting, que es Linux por definición.
     // Ofrecerlo sería ofrecer algo que falla al ejecutarse.

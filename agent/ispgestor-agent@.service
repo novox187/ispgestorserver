@@ -43,7 +43,13 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=yes
 ProtectSystem=full
-ReadWritePaths=/etc/ispgestor-agent /etc/wireguard
+
+# El guion de `-/etc/wireguard` hace que systemd ignore la ruta si no existe.
+# Sin él se niega a montar el espacio de nombres y mata el proceso antes de
+# arrancarlo (status=226/NAMESPACE), y solo el rol `vpn_host` tiene WireGuard
+# instalado: en la máquina de una oficina el agente entraba en bucle de
+# reinicio nada más instalarse.
+ReadWritePaths=/etc/ispgestor-agent -/etc/wireguard
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 RestrictSUIDSGID=yes
