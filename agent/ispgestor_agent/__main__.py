@@ -332,6 +332,31 @@ def _selftest(args) -> int:
             problems.append(f"No existe {config.wg_config_path}: los peers no podrían persistirse.")
         else:
             print(f"✓ Fichero de configuración {config.wg_config_path}")
+
+    elif config.role == "monitor":
+        # El `monitor` no aprovisiona nada: no tiene NIC dedicada ni escucha
+        # MNDP. Comprobarle esas dos cosas —lo que hacía la rama de abajo por
+        # descarte— daba un selftest en rojo en una instalación perfecta, y el
+        # instalador desatendido lo tomaba por un fallo y no arrancaba el
+        # servicio.
+        try:
+            import librouteros  # noqa: F401
+
+            print("✓ Dependencia 'librouteros' disponible")
+        except ImportError:
+            problems.append("Falta 'librouteros'. Instálala con: pip install -r requirements.txt")
+
+        if config.scannable_cidrs:
+            print(f"✓ Rangos que puede barrer: {', '.join(config.scannable_cidrs)}")
+        else:
+            # Aviso y no problema: el sondeo del parque no depende de esta lista.
+            # Lo único que queda inutilizado es el descubrimiento.
+            notes.append(
+                "Sin rangos permitidos: sondeará los equipos ya dados de alta pero "
+                "rechazará todos los barridos de descubrimiento. Se arregla volviendo "
+                "a enrolar con --scannable."
+            )
+
     else:
         try:
             import librouteros  # noqa: F401

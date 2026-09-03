@@ -5,6 +5,7 @@ de rangos que el agente aceptará barrer —su límite de seguridad— y la unid
 systemd que se le dice al operador que arranque.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -12,7 +13,23 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ispgestor_agent.__main__ import _parse_cidrs, _unit_name
+from ispgestor_agent.__main__ import _parse_cidrs, _selftest, _unit_name
+
+
+class _Args:
+    """Lo mínimo que `_selftest` mira de los argumentos."""
+
+    def __init__(self, config: Path):
+        self.config = config
+
+
+def _config(tmp_path: Path, **campos) -> _Args:
+    """Deja un fichero de configuración sin enrolar, para no salir a la red."""
+    ruta = tmp_path / "agent.conf"
+    ruta.write_text(json.dumps({"base_url": "https://api.invalida.test", **campos}))
+    ruta.chmod(0o600)
+
+    return _Args(ruta)
 
 
 class TestParseCidrs:
@@ -58,3 +75,42 @@ class TestUnitName:
     def test_instancia_usa_la_unidad_plantilla(self):
         # Es lo que permite que el hosting corra vpn_host y monitor a la vez.
         assert _unit_name(Path("/etc/ispgestor-agent/monitor.conf")) == "ispgestor-agent@monitor"
+
+
+class TestSelftestPorRol:
+    """El selftest tiene que comprobar lo que ese rol necesita, y solo eso.
+
+    Se descubrió instalando un `monitor` de verdad: la rama por descarte le
+    exigía NIC de aprovisionamiento y puerto MNDP —cosas del `provisioner`—, así
+    que daba rojo en una instalación perfecta. El instalador desatendido lo tomó
+    por un fallo y dejó el agente instalado pero sin arrancar.
+    """
+
+    def test_el_monitor_no_exige_nic_de_aprovisionamiento(self, tmp_path, capsys):
+        _selftest(_config(tmp_path, role="monitor", scannable_cidrs=["10.10.10.0/24"]))
+        salida = capsys.readouterr().out
+
+        assert "interfaces de aprovisionamiento" not in salida
+        # Y sí informa de lo suyo: los rangos que tiene permitido barrer.
+        assert "10.10.10.0/24" in salida
+
+    def test_el_monitor_sin_rangos_avisa_pero_no_lo_da_por_roto(self, tmp_path, capsys):
+        # El sondeo del parque funciona igual; lo que queda inutilizado es el
+        # descubrimiento. Es un aviso, no un problema.
+        _selftest(_config(tmp_path, role="monitor", scannable_cidrs=[]))
+        salida = capsys.readouterr().out
+
+        assert "Sin rangos permitidos" in salida
+        assert "Sin rangos permitidos" not in salida.split("Problemas encontrados:")[-1]
+
+    def test_el_provisioner_si_exige_nic(self, tmp_path, capsys):
+        _selftest(_config(tmp_path, role="provisioner", provisioning_interfaces=[]))
+        salida = capsys.readouterr().out
+
+        assert "interfaces de aprovisionamiento" in salida
+
+    def test_el_vpn_host_no_exige_nic_de_aprovisionamiento(self, tmp_path, capsys):
+        _selftest(_config(tmp_path, role="vpn_host", wg_interface="noexiste0"))
+        salida = capsys.readouterr().out
+
+        assert "interfaces de aprovisionamiento" not in salida
