@@ -124,8 +124,12 @@ class MonitoringController extends Controller
             'samples.*.signal_dbm'         => ['nullable', 'integer', 'between:-120,0'],
             'samples.*.noise_floor_dbm'    => ['nullable', 'integer', 'between:-130,0'],
             'samples.*.ccq_percent'        => ['nullable', 'integer', 'between:0,100'],
+            'samples.*.airmax_quality_percent'  => ['nullable', 'integer', 'between:0,100'],
+            'samples.*.airmax_capacity_percent' => ['nullable', 'integer', 'between:0,100'],
             'samples.*.tx_rate_mbps'       => ['nullable', 'numeric', 'min:0'],
             'samples.*.rx_rate_mbps'       => ['nullable', 'numeric', 'min:0'],
+            'samples.*.tx_throughput_kbps' => ['nullable', 'integer', 'min:0'],
+            'samples.*.rx_throughput_kbps' => ['nullable', 'integer', 'min:0'],
             'samples.*.tx_power_dbm'       => ['nullable', 'integer', 'between:-10,40'],
             'samples.*.frequency_mhz'      => ['nullable', 'integer', 'min:0'],
             'samples.*.channel_width_mhz'  => ['nullable', 'integer', 'min:0'],
@@ -270,13 +274,27 @@ class MonitoringController extends Controller
             'signal_dbm'         => $radio?->signalDbm,
             'noise_floor_dbm'    => $radio?->noiseFloorDbm,
             'ccq_percent'        => $radio?->ccqPercent,
+            'airmax_quality_percent'  => $radio?->airmaxQualityPercent,
+            'airmax_capacity_percent' => $radio?->airmaxCapacityPercent,
             'tx_rate_mbps'       => $radio?->txRateMbps,
             'rx_rate_mbps'       => $radio?->rxRateMbps,
+            'tx_throughput_kbps' => $radio?->txThroughputKbps,
+            'rx_throughput_kbps' => $radio?->rxThroughputKbps,
             'tx_power_dbm'       => $radio?->txPowerDbm,
             'frequency_mhz'      => $radio?->frequencyMhz,
             'channel_width_mhz'  => $radio?->channelWidthMhz,
             'distance_m'         => $radio?->distanceM,
             'station_count'      => $radio?->stationCount,
+            /*
+             * Estas cuatro no van a la serie temporal: describen cómo está
+             * configurado el enlace y no cambian entre una lectura y la
+             * siguiente. `row()` las ignora a propósito y solo las recoge
+             * `refreshSnapshots()`, que las sobrescribe en la ficha del equipo.
+             */
+            'ssid'               => $radio?->ssid,
+            'wireless_mode'      => $radio?->mode,
+            'security'           => $radio?->security,
+            'remote_mac'         => $radio?->remoteMac,
         ], fn ($v) => $v !== null);
 
         unset($sample['raw']);
@@ -315,6 +333,24 @@ class MonitoringController extends Controller
                 'last_signal_dbm'      => $sample['signal_dbm']  ?? null,
                 'last_ccq_percent'     => $sample['ccq_percent'] ?? null,
             ]);
+
+            /*
+             * La identidad del enlace se sobrescribe solo cuando la lectura la
+             * trae. Una muestra que el driver no supo interpretar, o la de un
+             * equipo sin radio, no puede borrar el SSID que ya se conocía:
+             * dejaría la ficha en blanco justo cuando hay una avería que
+             * diagnosticar, que es cuando alguien la mira.
+             */
+            foreach ([
+                'last_ssid'          => 'ssid',
+                'last_wireless_mode' => 'wireless_mode',
+                'last_security'      => 'security',
+                'last_remote_mac'    => 'remote_mac',
+            ] as $columna => $clave) {
+                if (($sample[$clave] ?? null) !== null) {
+                    $device->forceFill([$columna => $sample[$clave]]);
+                }
+            }
 
             if ($sample['reachable']) {
                 $device->forceFill([
@@ -355,8 +391,12 @@ class MonitoringController extends Controller
             // columna está poblada de forma homogénea para las gráficas.
             'snr_db'             => ($signal !== null && $noise !== null) ? $signal - $noise : null,
             'ccq_percent'        => $sample['ccq_percent']       ?? null,
+            'airmax_quality_percent'  => $sample['airmax_quality_percent']  ?? null,
+            'airmax_capacity_percent' => $sample['airmax_capacity_percent'] ?? null,
             'tx_rate_mbps'       => $sample['tx_rate_mbps']      ?? null,
             'rx_rate_mbps'       => $sample['rx_rate_mbps']      ?? null,
+            'tx_throughput_kbps' => $sample['tx_throughput_kbps'] ?? null,
+            'rx_throughput_kbps' => $sample['rx_throughput_kbps'] ?? null,
             'tx_power_dbm'       => $sample['tx_power_dbm']      ?? null,
             'frequency_mhz'      => $sample['frequency_mhz']     ?? null,
             'channel_width_mhz'  => $sample['channel_width_mhz'] ?? null,

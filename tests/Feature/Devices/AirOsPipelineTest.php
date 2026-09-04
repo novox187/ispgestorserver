@@ -69,6 +69,67 @@ it('normaliza en el servidor el JSON crudo que envía el agente', function () {
         ->and($sample->uptime_seconds)->toBe(1857600);
 });
 
+it('guarda calidad airMAX y caudal, que antes se leían y se tiraban', function () {
+    // El driver ya recibía estos campos en el JSON y los descartaba al escribir
+    // la muestra. Un enlace con -55 dBm y la capacidad airMAX al 11 % parece
+    // sano en cualquier panel que solo mire señal, y es justo el que hay que ir
+    // a mirar.
+    [$agent, $antenna] = monitorAgentWithAntenna();
+
+    pushRaw($agent, $antenna->id, airosRaw('xw-6.3.11-station'))->assertOk();
+
+    $sample = DeviceMetricSample::first();
+
+    expect($sample->airmax_quality_percent)->toBe(73)
+        ->and($sample->airmax_capacity_percent)->toBe(41)
+        ->and($sample->tx_throughput_kbps)->toBe(193)
+        ->and($sample->rx_throughput_kbps)->toBe(6390);
+});
+
+it('deja en nulo lo que el firmware no publica, sin inventarse ceros', function () {
+    // El AP de esta familia no publica `polling` ni `throughput`. Un cero ahí se
+    // leería como un enlace sin capacidad y sin tráfico, que es una avería.
+    [$agent, $antenna] = monitorAgentWithAntenna();
+
+    pushRaw($agent, $antenna->id, airosRaw('xc-8.7.4-ap'))->assertOk();
+
+    $sample = DeviceMetricSample::first();
+
+    expect($sample->airmax_quality_percent)->toBeNull()
+        ->and($sample->tx_throughput_kbps)->toBeNull()
+        // Lo que sí publica se guarda igual que antes.
+        ->and($sample->signal_dbm)->toBe(-58);
+});
+
+it('anota en la ficha cómo está configurado el enlace', function () {
+    // SSID, modo y cifrado no cambian entre lecturas: van a la ficha y no a la
+    // serie, donde cien mil filas diarias repetirían la misma cadena.
+    [$agent, $antenna] = monitorAgentWithAntenna();
+
+    pushRaw($agent, $antenna->id, airosRaw('xw-6.3.11-station'))->assertOk();
+
+    expect($antenna->refresh()->last_ssid)->toBe('ENLACE-NORTE')
+        ->and($antenna->last_wireless_mode)->toBe('sta')
+        ->and($antenna->last_security)->toBe('WPA2-AES')
+        ->and($antenna->last_remote_mac)->toBe('24:A4:3C:11:22:33');
+});
+
+it('una lectura que no supo interpretar no borra el SSID ya conocido', function () {
+    // Al revés dejaría la ficha en blanco justo cuando hay una avería que
+    // diagnosticar, que es cuando alguien la mira.
+    [$agent, $antenna] = monitorAgentWithAntenna();
+
+    pushRaw($agent, $antenna->id, airosRaw('xw-6.3.11-station'))->assertOk();
+
+    // La segunda lectura llega un minuto después: el índice único es
+    // (device_id, sampled_at), así que sin separarlas se ignoraría la segunda.
+    $this->travel(1)->minutes();
+    pushRaw($agent, $antenna->id, airosRaw('firmware-desconocido'))->assertOk();
+
+    expect($antenna->refresh()->last_ssid)->toBe('ENLACE-NORTE')
+        ->and($antenna->last_security)->toBe('WPA2-AES');
+});
+
 it('actualiza el resumen del equipo para el listado y el mapa', function () {
     [$agent, $antenna] = monitorAgentWithAntenna();
 

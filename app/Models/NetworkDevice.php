@@ -140,6 +140,10 @@ class NetworkDevice extends Model
             'last_signal_dbm',
             'last_ccq_percent',
             'last_telemetry_at',
+            'last_ssid',
+            'last_wireless_mode',
+            'last_security',
+            'last_remote_mac',
         ];
     }
 
@@ -229,6 +233,22 @@ class NetworkDevice extends Model
     public function metricSamples(): HasMany
     {
         return $this->hasMany(DeviceMetricSample::class, 'device_id');
+    }
+
+    /**
+     * La lectura más reciente del equipo, con todo lo que trajo.
+     *
+     * La ficha ya guarda señal y CCQ desnormalizados porque el mapa los pide de
+     * cientos de equipos a la vez; esta relación es para cuando hace falta el
+     * resto —CPU, memoria, caudal, calidad airMAX—, que son doce columnas más y
+     * no tenía sentido duplicar en `network_devices`.
+     *
+     * Cárgala con `with('latestSample')` para que el listado no dispare una
+     * consulta por equipo.
+     */
+    public function latestSample(): HasOne
+    {
+        return $this->hasOne(DeviceMetricSample::class, 'device_id')->latestOfMany('sampled_at');
     }
 
     public function hourlyMetrics(): HasMany

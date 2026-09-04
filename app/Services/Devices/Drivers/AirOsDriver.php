@@ -172,11 +172,16 @@ class AirOsDriver implements DeviceDriver
             signalDbm:       $this->int($wireless, 'signal'),
             noiseFloorDbm:   $this->int($wireless, 'noisef'),
             ccqPercent:      $this->ccq($wireless),
+            airmaxQualityPercent:  $this->polling($wireless, 'quality'),
+            airmaxCapacityPercent: $this->polling($wireless, 'capacity'),
             txRateMbps:      $this->float($wireless, 'txrate'),
             rxRateMbps:      $this->float($wireless, 'rxrate'),
+            txThroughputKbps: $this->throughput($wireless, 'tx'),
+            rxThroughputKbps: $this->throughput($wireless, 'rx'),
             txPowerDbm:      $this->int($wireless, 'txpower'),
             distanceM:       $this->int($wireless, 'distance'),
             stationCount:    $this->stationCount($wireless),
+            security:        $this->str($wireless, 'security'),
             // En modo estación la antena conoce la MAC del AP al que se asocia:
             // es la mitad de un enlace punto a punto y con ella el mapa puede
             // dibujarlo sin que nadie lo declare a mano.
@@ -256,6 +261,58 @@ class AirOsDriver implements DeviceDriver
         }
 
         return null;
+    }
+
+    /**
+     * Calidad y capacidad airMAX, que airOS publica dentro de `polling`.
+     *
+     * Se leen de ahí y no de la raíz porque es donde viven en las familias que
+     * las publican; en las que no —un equipo con airMAX desactivado, o un
+     * firmware que no las expone— el bloque no existe y el valor queda nulo, que
+     * es lo correcto: «no lo informa» y «cero por ciento» no son lo mismo, y un
+     * cero pintaría una alarma sobre un enlace sano.
+     *
+     * Se acota a 0-100 antes de devolverlo: la columna es un `tinyint` sin
+     * signo y un firmware que devolviera algo fuera de rango tumbaría la
+     * inserción del lote entero, no solo la de esa antena.
+     *
+     * @param array<string, mixed> $wireless
+     */
+    private function polling(array $wireless, string $key): ?int
+    {
+        $polling = $wireless['polling'] ?? null;
+
+        if (!is_array($polling)) {
+            return null;
+        }
+
+        $value = $this->int($polling, $key);
+
+        return $value === null ? null : max(0, min(100, $value));
+    }
+
+    /**
+     * Tráfico instantáneo en kbps del bloque `throughput`.
+     *
+     * Es el caudal que está cursando el enlace, no la tasa a la que negoció:
+     * son las dos líneas del gráfico que dibuja la propia antena, y sin ellas no
+     * hay forma de distinguir un enlace ocioso de uno saturado.
+     *
+     * @param array<string, mixed> $wireless
+     */
+    private function throughput(array $wireless, string $key): ?int
+    {
+        $throughput = $wireless['throughput'] ?? null;
+
+        if (!is_array($throughput)) {
+            return null;
+        }
+
+        $value = $this->int($throughput, $key);
+
+        // Negativo no es un caudal: se descarta en vez de guardarse, porque la
+        // columna no admite signo.
+        return $value === null || $value < 0 ? null : $value;
     }
 
     /**

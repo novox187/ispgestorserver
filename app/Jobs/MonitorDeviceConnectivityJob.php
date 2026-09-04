@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\AutomationSetting;
+use App\Models\DeviceMetricSample;
 use App\Models\NetworkDevice;
 use App\Models\ProvisioningAgent;
 use App\Notifications\Core\Facades\Notify;
@@ -11,6 +12,8 @@ use App\Services\Devices\ConnectivityRecorder;
 use App\Services\Devices\DeviceCapability;
 use App\Services\Devices\DeviceDriver;
 use App\Services\Devices\DeviceDriverRegistry;
+use App\Services\Devices\Dto\DeviceTelemetry;
+use App\Services\Devices\Dto\ProbeResult;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -200,8 +203,24 @@ class MonitorDeviceConnectivityJob implements ShouldQueue
         int $threshold,
         int $timeoutSeconds,
     ): void {
-        $result   = $driver->probe($device, $timeoutSeconds);
         $recorder = app(ConnectivityRecorder::class);
+
+        /*
+         * Se pide la telemetría y no solo el sondeo, cuando el driver la
+         * soporta, porque **son la misma llamada al equipo**: en RouterOS las dos
+         * leen `/system/resource`, y la diferencia está solo en cuánto se
+         * aprovecha de la respuesta. Sondear a secas tiraba la carga de CPU y la
+         * memoria que el router acababa de contar, y el panel enseñaba de él dos
+         * guiones donde de las antenas enseña barras. Un router ahogado de CPU es
+         * justo la avería que conviene ver venir antes de que deje de responder.
+         */
+        $telemetry = $driver->supports(DeviceCapability::TELEMETRY)
+            ? $driver->telemetry($device, $timeoutSeconds)
+            : null;
+
+        $result = $telemetry === null
+            ? $driver->probe($device, $timeoutSeconds)
+            : $this->asProbeResult($telemetry);
 
         // Anotar el resultado es lo mismo lo haga este ciclo o el botón de
         // «probar credenciales» del panel, así que vive en un sitio compartido.
@@ -209,5 +228,104 @@ class MonitorDeviceConnectivityJob implements ShouldQueue
         $result->ok
             ? $recorder->recordUp($device, $result)
             : $recorder->recordDown($device, $result, $threshold);
+
+        if ($telemetry !== null && $result->ok) {
+            $this->recordSample($device, $telemetry);
+        }
+    }
+
+    /**
+     * Traduce una lectura a la respuesta de un sondeo.
+     *
+     * Un equipo que contesta algo que no sabemos interpretar cuenta como VIVO,
+     * igual que hace cada driver en su `probe()`: respondió. Tratar un firmware
+     * desconocido como una caída llenaría el canal de alertas falsas cada vez
+     * que el cliente actualizara una tanda de equipos.
+     */
+    private function asProbeResult(DeviceTelemetry $telemetry): ProbeResult
+    {
+        if (!$telemetry->reachable) {
+            return ProbeResult::down($telemetry->error ?? 'sin respuesta');
+        }
+
+        return ProbeResult::up(
+            model:         $telemetry->model,
+            firmware:      $telemetry->firmware,
+            uptimeSeconds: $telemetry->uptimeSeconds,
+        );
+    }
+
+    /**
+     * Guarda la lectura como un punto más de la serie del equipo.
+     *
+     * Los equipos que vigila un agente ya dejan serie —el agente empuja sus
+     * lecturas por el canal de monitoreo—; esto es lo mismo para los que sondea
+     * el propio servidor por el túnel.
+     *
+     * Un fallo aquí se traga: la serie es un extra y no puede tumbar el ciclo que
+     * vigila el parque entero.
+     */
+    private function recordSample(NetworkDevice $device, DeviceTelemetry $telemetry): void
+    {
+        // Respondió, pero no se le entendió: no hay nada que guardar. Una fila de
+        // ceros se leería como un equipo parado.
+        if ($telemetry->error !== null) {
+            return;
+        }
+
+        try {
+            $radio = $telemetry->radio;
+
+            DeviceMetricSample::query()->updateOrCreate(
+                [
+                    'device_id' => $device->id,
+                    // Al minuto: el índice único es (device_id, sampled_at), y sin
+                    // truncar, dos ciclos que se solapen dejarían dos filas casi
+                    // idénticas separadas por segundos.
+                    'sampled_at' => now()->startOfMinute(),
+                ],
+                array_filter([
+                    'uptime_seconds'     => $telemetry->uptimeSeconds,
+                    'cpu_load_percent'   => $telemetry->cpuLoadPercent,
+                    'memory_free_bytes'  => $telemetry->memoryFreeBytes,
+                    'memory_total_bytes' => $telemetry->memoryTotalBytes,
+                    'signal_dbm'         => $radio?->signalDbm,
+                    'noise_floor_dbm'    => $radio?->noiseFloorDbm,
+                    'snr_db'             => $radio?->snrDb(),
+                    'ccq_percent'        => $radio?->ccqPercent,
+                    'tx_rate_mbps'       => $radio?->txRateMbps,
+                    'rx_rate_mbps'       => $radio?->rxRateMbps,
+                    'frequency_mhz'      => $radio?->frequencyMhz,
+                    'channel_width_mhz'  => $radio?->channelWidthMhz,
+                    'station_count'      => $radio?->stationCount,
+                ], fn ($v) => $v !== null),
+            );
+
+            /*
+             * Y el resumen desnormalizado de la ficha, que es de donde leen el
+             * listado y el mapa. Sin esto, un equipo al que llega el servidor
+             * saldría en el panel con la señal en blanco aunque acabara de
+             * contarla, porque hasta ahora este camino solo escribía «responde o
+             * no responde».
+             *
+             * La identidad del enlace solo se pisa cuando la lectura la trae: una
+             * respuesta sin bloque de radio no puede borrar el SSID conocido.
+             */
+            $device->forceFill(array_merge([
+                'last_telemetry_at' => now(),
+                'last_signal_dbm'   => $radio?->signalDbm,
+                'last_ccq_percent'  => $radio?->ccqPercent,
+            ], array_filter([
+                'last_ssid'          => $radio?->ssid,
+                'last_wireless_mode' => $radio?->mode,
+                'last_security'      => $radio?->security,
+                'last_remote_mac'    => $radio?->remoteMac,
+            ], fn ($v) => $v !== null)))->save();
+        } catch (Throwable $e) {
+            Log::debug('MonitorDeviceConnectivityJob: no se pudo guardar la telemetría.', [
+                'device_id' => $device->id,
+                'error'     => $e->getMessage(),
+            ]);
+        }
     }
 }

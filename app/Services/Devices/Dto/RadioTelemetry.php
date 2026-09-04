@@ -20,11 +20,31 @@ final readonly class RadioTelemetry
         public ?int $signalDbm = null,
         public ?int $noiseFloorDbm = null,
         public ?int $ccqPercent = null,
+        /**
+         * Calidad y capacidad airMAX, los dos indicadores propios de Ubiquiti.
+         *
+         * No sustituyen al CCQ ni se derivan de la señal: un enlace puede tener
+         * -55 dBm y estar dando el 11 % de su capacidad porque el sector está
+         * saturado, y ese caso no se ve en ninguna métrica de las otras.
+         */
+        public ?int $airmaxQualityPercent = null,
+        public ?int $airmaxCapacityPercent = null,
         public ?float $txRateMbps = null,
         public ?float $rxRateMbps = null,
+        /**
+         * Tráfico instantáneo en kbps, tal como lo publica el equipo.
+         *
+         * Es caudal real cursado, no la tasa de negociación del enlace: la
+         * pareja `txRateMbps`/`rxRateMbps` dice a cuánto *podría* ir, y esta a
+         * cuánto está yendo.
+         */
+        public ?int $txThroughputKbps = null,
+        public ?int $rxThroughputKbps = null,
         public ?int $txPowerDbm = null,
         public ?int $distanceM = null,
         public ?int $stationCount = null,
+        /** Cifrado en uso, tal como lo nombra el equipo: «WPA2-AES», «none». */
+        public ?string $security = null,
         public ?string $remoteMac = null,
         /**
          * MAC de todos los equipos al otro lado de este enlace: el AP si somos
@@ -65,11 +85,16 @@ final readonly class RadioTelemetry
             'noise_floor_dbm'   => $this->noiseFloorDbm,
             'snr_db'            => $this->snrDb(),
             'ccq_percent'       => $this->ccqPercent,
+            'airmax_quality_percent'  => $this->airmaxQualityPercent,
+            'airmax_capacity_percent' => $this->airmaxCapacityPercent,
             'tx_rate_mbps'      => $this->txRateMbps,
             'rx_rate_mbps'      => $this->rxRateMbps,
+            'tx_throughput_kbps' => $this->txThroughputKbps,
+            'rx_throughput_kbps' => $this->rxThroughputKbps,
             'tx_power_dbm'      => $this->txPowerDbm,
             'distance_m'        => $this->distanceM,
             'station_count'     => $this->stationCount,
+            'security'          => $this->security,
             'remote_mac'        => $this->remoteMac,
         ];
     }

@@ -9,6 +9,7 @@ use App\Notifications\Core\Enums\NotificationCategory;
 use App\Services\Devices\DeviceCapability;
 use App\Services\Devices\DeviceDriver;
 use App\Services\Devices\DeviceDriverRegistry;
+use App\Services\Devices\Dto\RadioTelemetry;
 use App\Services\Devices\Dto\DeviceTelemetry;
 use App\Services\Devices\Dto\ProbeResult;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -56,9 +57,32 @@ function registerFakeDriver(bool $reachable, string $error = 'sin respuesta'): v
                 : ProbeResult::down($this->error);
         }
 
+        /**
+         * Coherente con `probe()` a propósito: en un driver real las dos leen lo
+         * mismo del equipo, y el monitor se apoya en esa coherencia para sacar la
+         * serie de métricas de la misma llamada con la que decide si está vivo.
+         */
         public function telemetry(NetworkDevice $d, ?int $t = null): DeviceTelemetry
         {
-            return DeviceTelemetry::unreachable($this->error);
+            if (!$this->reachable) {
+                return DeviceTelemetry::unreachable($this->error);
+            }
+
+            return new DeviceTelemetry(
+                reachable:        true,
+                uptimeSeconds:    123456,
+                cpuLoadPercent:   17.5,
+                memoryFreeBytes:  40_000_000,
+                memoryTotalBytes: 65_011_712,
+                model:            'NanoStation M5',
+                firmware:         'XW.v6.3.11',
+                radio:            new RadioTelemetry(
+                    ssid:      'ENLACE-NORTE',
+                    mode:      'sta',
+                    signalDbm: -67,
+                    security:  'WPA2-AES',
+                ),
+            );
         }
 
         public function neighbors(NetworkDevice $d, ?int $t = null): array { return []; }
@@ -153,4 +177,46 @@ it('omite los equipos inactivos', function () {
     (new MonitorDeviceConnectivityJob())->handle(app(DeviceDriverRegistry::class));
 
     expect(NotificationLog::count())->toBe(0);
+});
+
+// ── La lectura que se aprovechaba a medias ───────────────────────────────────
+
+it('guarda la telemetría del sondeo, no solo si el equipo responde', function () {
+    // El equipo acababa de contar su CPU y su memoria en la misma llamada con la
+    // que se comprueba que está vivo, y eso se tiraba: el panel enseñaba de él
+    // dos guiones donde de las antenas con agente enseña barras.
+    $device = makeUbiquitiAntenna();
+    registerFakeDriver(reachable: true);
+
+    (new MonitorDeviceConnectivityJob())->handle(app(DeviceDriverRegistry::class));
+
+    $sample = \App\Models\DeviceMetricSample::where('device_id', $device->id)->first();
+
+    expect($sample)->not->toBeNull()
+        ->and($sample->cpu_load_percent)->toBe(17.5)
+        ->and($sample->memory_total_bytes)->toBe(65011712)
+        ->and($sample->signal_dbm)->toBe(-67);
+});
+
+it('deja el resumen de la ficha listo para el listado y el mapa', function () {
+    $device = makeUbiquitiAntenna();
+    registerFakeDriver(reachable: true);
+
+    (new MonitorDeviceConnectivityJob())->handle(app(DeviceDriverRegistry::class));
+
+    expect($device->refresh()->last_signal_dbm)->toBe(-67)
+        ->and($device->last_ssid)->toBe('ENLACE-NORTE')
+        ->and($device->last_security)->toBe('WPA2-AES')
+        ->and($device->last_telemetry_at)->not->toBeNull();
+});
+
+it('no guarda ninguna muestra de un equipo que no responde', function () {
+    // Una fila de ceros se leería como un equipo parado, que es justo lo
+    // contrario de «no se sabe nada de él».
+    $device = makeUbiquitiAntenna();
+    registerFakeDriver(reachable: false);
+
+    (new MonitorDeviceConnectivityJob())->handle(app(DeviceDriverRegistry::class));
+
+    expect(\App\Models\DeviceMetricSample::where('device_id', $device->id)->count())->toBe(0);
 });

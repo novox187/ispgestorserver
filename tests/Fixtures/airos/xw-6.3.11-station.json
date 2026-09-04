@@ -22,6 +22,21 @@
     "txrate": 130,
     "rxrate": 117,
     "distance": 4200,
-    "count": 0
+    "count": 0,
+    "security": "WPA2-AES",
+    "polling": {
+      "cb_capacity": 15000,
+      "dl_capacity": 30000,
+      "ul_capacity": 12000,
+      "use": 47,
+      "tx_use": 20,
+      "rx_use": 27,
+      "quality": 73,
+      "capacity": 41
+    },
+    "throughput": {
+      "tx": 193,
+      "rx": 6390
+    }
   }
 }

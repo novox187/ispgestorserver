@@ -124,6 +124,11 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
             ->middleware('permission:mikrotik.ver');
         Route::get('/devices/{id}', [NetworkDeviceController::class, 'show'])
             ->middleware('permission:mikrotik.ver');
+        // Ficha de diagnóstico: última lectura completa, serie histórica y
+        // vecinos. Va aparte de `show` porque cuesta varias consultas más y no
+        // tiene sentido pagarlas al pintar el listado.
+        Route::get('/devices/{id}/metrics', [NetworkDeviceController::class, 'metrics'])
+            ->middleware('permission:mikrotik.ver');
         Route::post('/devices/{id}/test', [NetworkDeviceController::class, 'test'])
             ->middleware('permission:mikrotik.gestionar');
 
@@ -287,6 +292,7 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
     Route::prefix('chat')->middleware('permission:soporte.ver')->group(function () {
         Route::get('/conversations', [AdminChatController::class, 'conversations']);
         Route::get('/client/{clientId}/events', [AdminChatController::class, 'clientEvents']);
+        Route::get('/client/{clientId}/ticket', [AdminChatController::class, 'clientTicket']);
         Route::get('/{ticketId}/messages', [AdminChatController::class, 'messages']);
         Route::post('/{ticketId}/messages', [AdminChatController::class, 'store'])->middleware('permission:soporte.gestionar');
         Route::put('/{ticketId}/assign', [AdminChatController::class, 'assign'])->middleware('permission:soporte.gestionar');
