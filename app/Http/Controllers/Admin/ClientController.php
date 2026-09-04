@@ -17,15 +17,33 @@ use Illuminate\Support\Facades\Log;
 
 class ClientController extends Controller
 {
+    /**
+     * Estados de factura que cuentan como deuda viva del cliente.
+     * 'draft' y 'cancelled' quedan fuera: la primera aún no se emitió y la
+     * segunda ya no se cobra.
+     */
+    private const DEBT_STATUSES = ['pending', 'failed'];
+
+    /**
+     * Variantes de `service_status` que representan un servicio no pleno.
+     *
+     * El enum de la columna guarda 'LIMITED', pero el código sólo contemplaba
+     * la forma castellana 'LIMITADO': un cliente limitado quedaba fuera del
+     * filtro, fuera del contador y sin poder reactivarse.
+     */
+    private const DEGRADED_STATUSES = ['suspended', 'Suspended', 'SUSPENDIDO', 'SUSPENDED', 'LIMITADO', 'LIMITED', 'limited'];
+
    
    /**
      * Listado resumido de clientes: Nombre, Email, Teléfono, Plan actual, Estado del servicio
      */
     public function listSummary(Request $request)
     {
-        $search = $request->input('search');
-        $status = $request->input('status');
-        $perPage = $request->input('per_page', 10);
+        $search  = $request->input('search');
+        $status  = $request->input('status');
+        $perPage = (int) $request->input('per_page', 10);
+        $sort    = (string) $request->input('sort', 'id');
+        $dir     = strtolower((string) $request->input('dir', 'asc')) === 'desc' ? 'desc' : 'asc';
 
         $query = Client::query();
 
@@ -34,6 +52,8 @@ class ClientController extends Controller
             $query->where(function($q) use ($search) {
                 $q->where('full_name', 'like', "%{$search}%")
                   ->orWhere('email', 'like', "%{$search}%")
+                  ->orWhere('document_id', 'like', "%{$search}%")
+                  ->orWhere('ip', 'like', "%{$search}%")
                   ->orWhere('contact_phone', 'like', "%{$search}%");
             });
         }
@@ -43,10 +63,14 @@ class ClientController extends Controller
             if ($status === 'active') {
                  $query->whereIn('service_status', ['active', 'ACTIVO', 'Active']);
             } elseif ($status === 'suspended') {
-                 $query->whereIn('service_status', ['suspended', 'SUSPENDIDO', 'LIMITADO', 'Suspended']);
+                 $query->whereIn('service_status', self::DEGRADED_STATUSES);
+            } elseif ($status === 'cancelled') {
+                 $query->whereIn('service_status', ['cancelled', 'CANCELADO', 'Cancelled']);
             } elseif ($status === 'inactive') {
-                 $query->whereIn('service_status', ['inactive', 'INACTIVO', 'Inactive'])
+                 $query->where(function ($q) {
+                     $q->whereIn('service_status', ['inactive', 'INACTIVO', 'Inactive'])
                        ->orWhereNull('service_status');
+                 });
             } elseif ($status === 'without_plan') {
                  // Filtrar clientes que NO tienen un plan activo vigente
                  $query->whereDoesntHave('clientPlans', function ($q) {
@@ -56,14 +80,50 @@ class ClientController extends Controller
                               ->orWhere('end_date', '>=', now());
                        });
                  });
+            } elseif ($status === 'with_debt') {
+                 // Cartera vencida: al menos una factura sin cobrar
+                 $query->whereHas('invoices', fn ($q) => $q->whereIn('status', self::DEBT_STATUSES));
             } else {
                  $query->where('service_status', $status);
             }
         }
 
-        // Ordenar: Clientes 'cancelled' al final
-        $query->orderByRaw("CASE WHEN service_status = 'cancelled' THEN 1 ELSE 0 END")
-              ->orderBy('id');
+        // Las columnas se fijan antes de los agregados: select() reemplaza la
+        // lista entera y dejaría fuera las subconsultas de withSum/withCount.
+        $query->select(['id', 'full_name', 'email', 'contact_phone', 'service_status', 'document_id', 'ip', 'contract_date']);
+
+        // Deuda y saldo se agregan en SQL para poder ordenar por ellos sin
+        // traer todas las facturas de cada cliente a memoria.
+        $query->withSum(
+            ['invoices as debt_total' => fn ($q) => $q->whereIn('status', self::DEBT_STATUSES)],
+            'total_amount'
+        );
+        $query->withCount([
+            'invoices as debt_count' => fn ($q) => $q->whereIn('status', self::DEBT_STATUSES),
+            'invoices as overdue_count' => fn ($q) => $q
+                ->whereIn('status', self::DEBT_STATUSES)
+                ->whereDate('due_date', '<', now()->toDateString()),
+        ]);
+
+        // Ordenación. 'cancelled' siempre al final salvo que se pida un orden
+        // explícito por deuda o saldo, donde ese agrupamiento estorba.
+        $sortable = [
+            'id'        => 'id',
+            'name'      => 'full_name',
+            'status'    => 'service_status',
+            'debt'      => 'debt_total',
+            'contract'  => 'contract_date',
+        ];
+
+        if ($sort === 'debt') {
+            $query->orderByRaw('COALESCE(debt_total, 0) ' . $dir);
+        } elseif (isset($sortable[$sort])) {
+            $query->orderByRaw("CASE WHEN service_status = 'cancelled' THEN 1 ELSE 0 END")
+                  ->orderBy($sortable[$sort], $dir);
+        } else {
+            $query->orderByRaw("CASE WHEN service_status = 'cancelled' THEN 1 ELSE 0 END")
+                  ->orderBy('id');
+        }
 
         // Carga clientes y su plan activo más reciente (si existe)
         $paginator = $query->with(['clientPlans' => function ($q) {
@@ -73,8 +133,7 @@ class ClientController extends Controller
                          ->orWhere('end_date', '>=', now());
                   })
                   ->orderByDesc('start_date');
-            }, 'clientPlans.plan'])
-            ->select(['id', 'full_name', 'email', 'contact_phone', 'service_status','document_id'])
+            }, 'clientPlans.plan', 'wallet:id,client_id,balance'])
             ->paginate($perPage);
 
         // Transformar la colección dentro del paginador
@@ -87,7 +146,14 @@ class ClientController extends Controller
                 'email' => $client->email,
                 'phone' => $client->contact_phone,
                 'plan' => $currentPlan && $currentPlan->plan ? $currentPlan->plan->name : null,
+                'plan_price' => $currentPlan && $currentPlan->plan ? (float) $currentPlan->plan->monthly_price : null,
                 'status' => $client->service_status,
+                'ip' => $client->ip,
+                'contract_date' => $client->contract_date?->toDateString(),
+                'wallet_balance' => (float) ($client->wallet->balance ?? 0),
+                'debt_total' => (float) ($client->debt_total ?? 0),
+                'debt_count' => (int) ($client->debt_count ?? 0),
+                'overdue_count' => (int) ($client->overdue_count ?? 0),
             ];
         });
 
@@ -95,11 +161,20 @@ class ClientController extends Controller
         $stats = [
             'total' => Client::count(),
             'active' => Client::whereIn('service_status', ['active', 'ACTIVO', 'Active'])->count(),
-            'suspended' => Client::whereIn('service_status', ['suspended', 'SUSPENDIDO', 'LIMITADO', 'Suspended'])->count(),
+            'suspended' => Client::whereIn('service_status', self::DEGRADED_STATUSES)->count(),
             'inactive' => Client::where(function($q) {
                  $q->whereIn('service_status', ['inactive', 'INACTIVO', 'Inactive'])
                    ->orWhereNull('service_status');
             })->count(),
+            'with_debt' => Client::whereHas('invoices', fn ($q) => $q->whereIn('status', self::DEBT_STATUSES))->count(),
+            'without_plan' => Client::whereDoesntHave('clientPlans', function ($q) {
+                $q->where('status', 'active')
+                  ->where(function ($qq) {
+                      $qq->whereNull('end_date')
+                         ->orWhere('end_date', '>=', now());
+                  });
+            })->count(),
+            'debt_amount' => (float) \App\Models\Invoice::whereIn('status', self::DEBT_STATUSES)->sum('total_amount'),
         ];
 
         $response = $paginator->toArray();
@@ -485,7 +560,7 @@ class ClientController extends Controller
         }
 
         // Validaciones previas
-        if (!in_array(strtoupper($client->service_status), ['SUSPENDIDO', 'SUSPENDED', 'LIMITADO'])) {
+        if (!in_array(strtoupper($client->service_status), ['SUSPENDIDO', 'SUSPENDED', 'LIMITADO', 'LIMITED'])) {
             Log::warning("Intento de activar cliente que no está suspendido: {$id} (Estado: {$client->service_status})");
             return response()->json(['success' => false, 'message' => 'El cliente no está suspendido'], 400);
         }

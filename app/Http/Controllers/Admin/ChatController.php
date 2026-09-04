@@ -149,6 +149,43 @@ class ChatController extends Controller
     }
 
     /**
+     * GET /api/admin/chat/client/{clientId}/ticket
+     * Ticket vigente de un cliente concreto.
+     *
+     * Existe para que el panel de clientes no tenga que descargar la lista
+     * completa de conversaciones y buscar la suya en el navegador: se pide
+     * directamente la que importa. Prioriza el ticket abierto más reciente y,
+     * si no hay ninguno, devuelve el último cerrado para conservar el
+     * historial visible.
+     */
+    public function clientTicket(int $clientId): JsonResponse
+    {
+        $ticket = Ticket::where('client_id', $clientId)
+            ->orderByRaw("CASE WHEN status = 'closed' THEN 1 ELSE 0 END")
+            ->orderByDesc('last_message_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if (! $ticket) {
+            return response()->json(['ticket' => null]);
+        }
+
+        return response()->json([
+            'ticket' => [
+                'ticket_id'       => $ticket->id,
+                'subject'         => $ticket->subject,
+                'status'          => $ticket->status,
+                'last_message_at' => $ticket->last_message_at?->toIso8601String(),
+                'unread_count'    => $ticket->messages()
+                    ->whereNull('read_at')
+                    ->whereNull('employee_id')
+                    ->whereNull('event_type')
+                    ->count(),
+            ],
+        ]);
+    }
+
+    /**
      * POST /api/admin/chat/{ticketId}/messages
      * El empleado envía un mensaje en el ticket.
      */
