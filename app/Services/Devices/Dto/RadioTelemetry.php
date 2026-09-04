@@ -47,6 +47,15 @@ final readonly class RadioTelemetry
         public ?string $security = null,
         public ?string $remoteMac = null,
         /**
+         * SNR tal como lo publica el equipo, para los que lo dan hecho.
+         *
+         * RouterOS informa `signal-to-noise` pero no el ruido de fondo, así que
+         * la resta de `snrDb()` no puede calcularlo. Guardar el valor dado y
+         * dejar `noiseFloorDbm` nulo es más honesto que inventar un ruido a
+         * partir del cual la resta cuadre.
+         */
+        public ?int $reportedSnrDb = null,
+        /**
          * MAC de todos los equipos al otro lado de este enlace: el AP si somos
          * estación, o las estaciones asociadas si somos AP.
          *
@@ -66,6 +75,12 @@ final readonly class RadioTelemetry
      */
     public function snrDb(): ?int
     {
+        // Manda el que informa el equipo: si lo publica, es su medida y no una
+        // reconstrucción nuestra.
+        if ($this->reportedSnrDb !== null) {
+            return $this->reportedSnrDb;
+        }
+
         if ($this->signalDbm === null || $this->noiseFloorDbm === null) {
             return null;
         }

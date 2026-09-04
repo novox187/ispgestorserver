@@ -129,6 +129,12 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
         // tiene sentido pagarlas al pintar el listado.
         Route::get('/devices/{id}/metrics', [NetworkDeviceController::class, 'metrics'])
             ->middleware('permission:mikrotik.ver');
+        // Lectura en directo mientras la ficha está abierta. Lleva cubo propio:
+        // es la única ruta del panel que genera tráfico contra el equipo a
+        // cadencia del navegador, y un par de fichas abiertas en varias pestañas
+        // no puede convertirse en un sondeo continuo sobre un CPE de tejado.
+        Route::get('/devices/{id}/live', [NetworkDeviceController::class, 'live'])
+            ->middleware(['permission:mikrotik.ver', 'throttle:60,1']);
         Route::post('/devices/{id}/test', [NetworkDeviceController::class, 'test'])
             ->middleware('permission:mikrotik.gestionar');
 

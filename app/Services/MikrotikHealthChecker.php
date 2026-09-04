@@ -82,17 +82,83 @@ class MikrotikHealthChecker
      */
     public function query(NetworkDevice $router, string $command, ?int $timeoutOverride = null): array
     {
+        return (new Client($this->config($router, $timeoutOverride)))
+            ->query(new Query($command))
+            ->read();
+    }
+
+    /**
+     * Ejecuta VARIAS consultas de solo lectura sobre UNA sola sesión.
+     *
+     * Cada llamada a `query()` abre una conexión TCP y hace login. Leer los tres
+     * recursos que describen a un CPE inalámbrico —sistema, interfaz de radio y
+     * tabla de registro— con `query()` significaría tres logins por equipo y por
+     * ciclo, contra un equipo de gama baja colgado de un tejado.
+     *
+     * Un comando que falla NO tumba a los demás: pedir la tabla de radio a un
+     * router sin paquete `wireless` es un error esperado, y tiene que devolver
+     * «esto aquí no existe» en vez de perder también la lectura del sistema.
+     *
+     * @param  array<string, string|array{0: string, 1: list<string>}> $commands
+     *         Clave del resultado => comando, o [comando, argumentos de la API].
+     * @return array<string, list<mixed>>
+     */
+    public function queries(NetworkDevice $router, array $commands, ?int $timeoutOverride = null): array
+    {
+        $client = new Client($this->config($router, $timeoutOverride));
+        $salida = [];
+
+        foreach ($commands as $clave => $comando) {
+            [$ruta, $argumentos] = is_array($comando) ? $comando : [$comando, []];
+
+            try {
+                $query = new Query($ruta);
+
+                foreach ($argumentos as $argumento) {
+                    $query->add($argumento);
+                }
+
+                $salida[$clave] = $client->query($query)->read();
+            } catch (Throwable $e) {
+                Log::debug('MikrotikHealthChecker: comando rechazado por el equipo.', [
+                    'router_id' => $router->id,
+                    'command'   => $ruta,
+                    'error'     => $e->getMessage(),
+                ]);
+
+                $salida[$clave] = [];
+            }
+        }
+
+        return $salida;
+    }
+
+    private function config(NetworkDevice $router, ?int $timeoutOverride): Config
+    {
         $timeout = $timeoutOverride !== null ? max(1, $timeoutOverride) : $this->timeoutSeconds;
 
-        $config = new Config([
+        return new Config([
             'host'     => (string) $router->host,
             'user'     => (string) $router->username,
             'pass'     => (string) $router->password,
             'port'     => (int) ($router->port ?: 8728),
             'timeout'  => $timeout,
+            /*
+             * La biblioteca tiene DOS relojes y solo se estaba parando uno:
+             * `timeout` limita el establecimiento de la conexión y
+             * `socket_timeout` la espera de la respuesta, con 30 segundos por
+             * defecto. Un equipo que acepta la conexión y luego no contesta
+             * —lo normal en una IP que ya es de otro, o tras un firewall que
+             * traga los paquetes— bloqueaba treinta segundos por equipo pese a
+             * que el llamante pidiera tres. En un ciclo de monitoreo con
+             * cientos de equipos eso se come el trabajo entero; en la ficha en
+             * directo, que sondea cada pocos segundos, es inviable.
+             *
+             * Un timeout de lectura no puede ser menor que el de conexión: si
+             * el equipo tarda en aceptar, la respuesta llega después.
+             */
+            'socket_timeout' => $timeout,
             'attempts' => 1,
         ]);
-
-        return (new Client($config))->query(new Query($command))->read();
     }
 }

@@ -12,6 +12,7 @@ use App\Models\NetworkLink;
 use App\Services\Devices\ConnectivityRecorder;
 use App\Services\Devices\DeviceCapability;
 use App\Services\Devices\DeviceDriverRegistry;
+use App\Services\Devices\TelemetryRecorder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -34,6 +35,7 @@ class NetworkDeviceController extends Controller
     public function __construct(
         private readonly DeviceDriverRegistry $drivers,
         private readonly ConnectivityRecorder $connectivity,
+        private readonly TelemetryRecorder $telemetryRecorder,
     ) {
     }
 
@@ -358,6 +360,73 @@ class NetworkDeviceController extends Controller
         })->filter()->values()->all();
     }
 
+    /**
+     * Lee el equipo AHORA MISMO y devuelve lo que conteste.
+     *
+     * Es lo que hace que la ficha se parezca a la interfaz del propio equipo:
+     * el ciclo de fondo sondea cada pocos minutos —cadencia pensada para
+     * cientos de equipos a la vez— y eso, mirando UNO, se ve como una pantalla
+     * congelada. Aquí se pregunta al abrir la ficha y mientras esté abierta.
+     *
+     * ## Qué se guarda
+     *
+     * La lectura entra en la serie como cualquier otra, pero truncada al
+     * minuto: sondear cada pocos segundos no puede meter doce filas por minuto
+     * en la tabla grande del sistema ni sesgar el resumen horario a favor de los
+     * equipos que alguien estuvo mirando.
+     *
+     * ## Cuándo no funciona
+     *
+     * Cuando el servidor no alcanza al equipo, que es el caso de las antenas
+     * que viven en la LAN del cliente y sondea un agente. Se devuelve el motivo
+     * y la ficha sigue enseñando lo último que trajo el agente, en vez de
+     * quedarse en blanco.
+     */
+    public function live(int $id): JsonResponse
+    {
+        $device = NetworkDevice::findOrFail($id);
+        $driver = $this->drivers->for($device);
+
+        if ($driver === null || !$driver->supports(DeviceCapability::TELEMETRY)) {
+            return response()->json([
+                'error' => [
+                    'code'    => 'DRIVER_UNAVAILABLE',
+                    'message' => "No hay driver capaz de leer «{$device->driver}» en directo.",
+                ],
+            ], 422);
+        }
+
+        /*
+         * Cinco segundos y no los ocho del sondeo manual: esto se pide cada
+         * pocos segundos con la ficha abierta, y un equipo que tarda más de
+         * cinco en contestar no va a dar sensación de «en directo» de todos
+         * modos. Cuando falle, la ficha se queda con lo que trajo el agente.
+         */
+        $telemetry = $driver->telemetry($device, 5);
+
+        if (!$telemetry->reachable) {
+            /*
+             * 200 y no error: que el servidor no llegue a una antena de la LAN
+             * del cliente es lo NORMAL, no una avería del panel. La ficha lo
+             * dice una vez, se queda con los datos del agente y deja de insistir.
+             */
+            return response()->json(['data' => [
+                'ok'        => false,
+                'error'     => $telemetry->error,
+                'telemetry' => null,
+            ]]);
+        }
+
+        $this->telemetryRecorder->record($device, $telemetry);
+
+        return response()->json(['data' => [
+            'ok'        => true,
+            'error'     => $telemetry->error,
+            'telemetry' => $this->telemetry($device->fresh()?->latestSample),
+            'device'    => $this->map($device->fresh()->load('latestSample')),
+        ]]);
+    }
+
     /** @return array<string, mixed> */
     private function rules(bool $forUpdate = false): array
     {
@@ -511,12 +580,21 @@ class NetworkDeviceController extends Controller
         }
 
         return match (strtolower($mode)) {
+            // airOS
             'sta'                     => 'Estación',
             'sta-wds', 'sta_wds'      => 'Estación WDS',
             'ap'                      => 'Punto de acceso',
             'ap-wds', 'ap_wds'        => 'Punto de acceso WDS',
             'ap-ptp'                  => 'Punto de acceso (PtP)',
             'ap-ptmp'                 => 'Punto de acceso (PtMP)',
+            // RouterOS, que nombra los mismos papeles a su manera
+            'station'                 => 'Estación',
+            'station-bridge'          => 'Estación (puente)',
+            'station-wds'             => 'Estación WDS',
+            'station-pseudobridge'    => 'Estación (pseudopuente)',
+            'station-pseudobridge-clone' => 'Estación (pseudopuente clonado)',
+            'ap-bridge'               => 'Punto de acceso',
+            'bridge'                  => 'Punto de acceso (un solo cliente)',
             default                   => $mode,
         };
     }

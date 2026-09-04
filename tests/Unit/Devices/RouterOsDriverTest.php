@@ -47,8 +47,13 @@ it('declara el fabricante y el driver que casan con el inventario', function () 
         ->and($driver->name())->toBe(MikrotikRouter::DRIVER)
         ->and($driver->supports(DeviceCapability::PROBE))->toBeTrue()
         ->and($driver->supports(DeviceCapability::TELEMETRY))->toBeTrue()
-        // No promete lo que todavía no hace.
-        ->and($driver->supports(DeviceCapability::RADIO))->toBeFalse();
+        /*
+         * Y la radio, desde que el parque resultó tener SXT y LHG haciendo de
+         * CPE inalámbrico: mientras esto dijo `false`, la ficha de uno de ellos
+         * salía sin señal, sin SNR y sin CCQ aunque el equipo los publicara.
+         * Ver `tests/Feature/Devices/RouterOsRadioTest.php`.
+         */
+        ->and($driver->supports(DeviceCapability::RADIO))->toBeTrue();
 });
 
 it('devuelve el equipo vivo con su identidad al sondearlo', function () {
