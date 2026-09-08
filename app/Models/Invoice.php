@@ -144,6 +144,38 @@ class Invoice extends Model
     }
 
     /**
+     * Facturas que harían caer a su cliente en la próxima corrida de corte.
+     *
+     * Vive aquí, y no dentro del job, porque el panel necesita hacer la misma
+     * pregunta para poder decir «con este valor se cortaría a N clientes» antes
+     * de guardar. Dos copias de este criterio se separarían a la primera
+     * modificación, y la previsualización mentiría justo cuando más importa.
+     */
+    public function scopeSuspensionCohort($query, int $graceDays)
+    {
+        return $query
+            ->whereIn('status', [self::STATUS_FAILED, self::STATUS_PENDING])
+            ->where('due_date', '<=', now()->subDays($graceDays)->toDateString())
+            ->whereHas('client', function ($q) {
+                $q->whereNotIn('service_status', [
+                    'suspended', 'SUSPENDED', 'SUSPENDIDO',
+                    'cancelled', 'CANCELLED',
+                ]);
+
+                // La lista blanca se revalida en el servicio de corte (defensa
+                // en profundidad); aquí se filtra para no contar ni procesar a
+                // quien nunca se va a suspender.
+                $q->whereDoesntHave('whitelistEntries', function ($w) {
+                    $w->where('active', true)
+                      ->where(function ($expiry) {
+                          $expiry->whereNull('expires_at')
+                                 ->orWhere('expires_at', '>', now());
+                      });
+                });
+            });
+    }
+
+    /**
      * Generar número de factura secuencial en formato SRI Ecuador: 001-001-000000001
      * El secuencial es estrictamente creciente por combinación establecimiento+emisión.
      */

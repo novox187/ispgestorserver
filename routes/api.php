@@ -271,6 +271,9 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
     Route::get('/automations/{key}', [AdminAutomationController::class, 'show'])->middleware('permission:configuracion.ver');
     Route::put('/automations/{key}', [AdminAutomationController::class, 'update'])->middleware('permission:configuracion.gestionar');
     Route::get('/automations/{key}/audits', [AdminAutomationController::class, 'audits'])->middleware('permission:configuracion.ver');
+    // Cuántos clientes caerían con unos parámetros dados, para poder decirlo
+    // antes de guardar y no a la mañana siguiente.
+    Route::post('/automations/{key}/impact', [AdminAutomationController::class, 'impact'])->middleware('permission:configuracion.ver');
     Route::post('/automations/{key}/run-now', [AdminAutomationController::class, 'runNow'])->middleware('permission:configuracion.gestionar');
 
     // Lista blanca de clientes — solo super_admin

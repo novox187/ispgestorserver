@@ -82,26 +82,11 @@ class ProcessClientSuspension implements ShouldQueue
             Log::warning('ProcessClientSuspension: los Cobros Automáticos están DESACTIVADOS. Ninguna factura pasará a estado failed; el corte opera solo por fecha de vencimiento.');
         }
 
+        // El criterio vive en Invoice::scopeSuspensionCohort porque el panel lo
+        // reutiliza para previsualizar a cuántos clientes afectaría un cambio de
+        // días de gracia antes de guardarlo.
         $overdueInvoices = Invoice::with(['client.wallet'])
-            ->whereIn('status', [Invoice::STATUS_FAILED, Invoice::STATUS_PENDING])
-            ->where('due_date', '<=', now()->subDays($graceDays)->toDateString())
-            ->whereHas('client', function ($q) {
-                $q->whereNotIn('service_status', [
-                    'suspended', 'SUSPENDED', 'SUSPENDIDO',
-                    'cancelled', 'CANCELLED',
-                ]);
-
-                // Excluir clientes con inclusión vigente en la lista blanca:
-                // la validación final vive en ClientSuspensionService (defensa en
-                // profundidad), pero filtramos aquí para evitar trabajo inútil.
-                $q->whereDoesntHave('whitelistEntries', function ($w) {
-                    $w->where('active', true)
-                      ->where(function ($expiry) {
-                          $expiry->whereNull('expires_at')
-                                 ->orWhere('expires_at', '>', now());
-                      });
-                });
-            })
+            ->suspensionCohort($graceDays)
             ->get();
 
         if ($overdueInvoices->isEmpty()) {

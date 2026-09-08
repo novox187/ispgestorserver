@@ -5,23 +5,67 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Audit;
 use App\Models\AutomationSetting;
+use App\Services\AutomationPolicyService;
 use App\Services\AutomationSettingsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Bus;
 
 class AutomationController extends Controller
 {
-    public function __construct(private readonly AutomationSettingsService $service) {}
+    public function __construct(
+        private readonly AutomationSettingsService $service,
+        private readonly AutomationPolicyService $policy,
+    ) {}
 
     public function index()
     {
-        return response()->json(AutomationSetting::orderBy('id')->get());
+        $settings = AutomationSetting::orderBy('id')->get();
+
+        return response()->json([
+            // El panel necesita, además del estado, saber qué se puede tocar:
+            // sin la política tendría que volver a codificar los límites en el
+            // navegador, que es justo como se llegó a poder configurar la
+            // facturación mensual «cada cinco minutos».
+            'data'        => $settings->map(fn (AutomationSetting $s) => $this->withPolicy($s)),
+            'warnings'    => $this->policy->coherenceWarnings($settings),
+            'risk_levels' => config('automations.risk_levels'),
+        ]);
     }
 
     public function show(string $key)
     {
         $setting = AutomationSetting::where('key', $key)->firstOrFail();
-        return response()->json($setting);
+        return response()->json($this->withPolicy($setting));
+    }
+
+    /**
+     * A cuántos clientes afectaría un cambio antes de aplicarlo.
+     */
+    public function impact(Request $request, string $key)
+    {
+        $setting = AutomationSetting::where('key', $key)->firstOrFail();
+
+        $params = $request->validate([
+            'params' => ['sometimes', 'array'],
+        ])['params'] ?? [];
+
+        return response()->json($this->policy->previewImpact($setting, $params));
+    }
+
+    private function withPolicy(AutomationSetting $setting): array
+    {
+        $policy = $this->policy->policyFor($setting->key);
+
+        return $setting->toArray() + [
+            'policy' => [
+                'risk'               => $policy['risk'],
+                'summary'            => $policy['summary'],
+                'if_disabled'        => $policy['if_disabled'],
+                'why_schedule'       => $policy['why_schedule'],
+                'allowed_schedules'  => $this->policy->allowedSchedules($setting),
+                'supports_impact'    => $setting->key === 'client_suspension',
+            ],
+        ];
     }
 
     public function update(Request $request, string $key)
@@ -41,6 +85,14 @@ class AutomationController extends Controller
         if (isset($data['schedule_type']) || isset($data['schedule_config'])) {
             $type = $data['schedule_type'] ?? $setting->schedule_type;
             $config = $data['schedule_config'] ?? $setting->schedule_config ?? [];
+
+            // Qué cadencias admite ESTE worker. Ocultarlas en el desplegable no
+            // basta: la API se llama igual desde fuera del panel.
+            $policyErrors = $this->policy->validateScheduleType($setting, $type);
+            if (!empty($policyErrors)) {
+                return response()->json(['errors' => $policyErrors], 422);
+            }
+
             $scheduleErrors = $this->service->validateSchedule($type, $config);
             if (!empty($scheduleErrors)) {
                 return response()->json(['errors' => $scheduleErrors], 422);
@@ -56,7 +108,7 @@ class AutomationController extends Controller
 
         $setting->update($data);
 
-        return response()->json($setting->fresh());
+        return response()->json($this->withPolicy($setting->fresh()));
     }
 
     public function audits(string $key)
