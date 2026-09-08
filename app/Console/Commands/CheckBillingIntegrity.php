@@ -13,9 +13,10 @@ use Illuminate\Console\Command;
 class CheckBillingIntegrity extends Command
 {
     protected $signature = 'billing:check-integrity
-                            {--skip-mikrotik : Omitir la comparación contra la lista morosos del router}';
+                            {--skip-mikrotik : Omitir la comparación contra la lista morosos del router}
+                            {--repair        : Corregir la desalineación con la lista morosos (pide confirmación)}';
 
-    protected $description = 'Verifica los invariantes entre facturación, cortes de servicio y MikroTik (solo lectura)';
+    protected $description = 'Verifica los invariantes entre facturación, cortes de servicio y MikroTik';
 
     public function handle(BillingIntegrityService $integrity): int
     {
@@ -46,6 +47,30 @@ class CheckBillingIntegrity extends Command
 
         $this->warn("⚠️  {$report['total_findings']} inconsistencia(s). Detalle en el log 'billing' y en la auditoría (BILLING_INTEGRITY_OP).");
         $this->line(json_encode($report['findings'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+
+        if ($this->option('repair')) {
+            $this->line('');
+            $this->warn('La reparación solo toca la lista morosos del router: desbloquea a clientes con servicio vigente y bloquea a los suspendidos que falten.');
+            $this->warn('Los desajustes en la propia base de datos (invariantes 1 a 4) NO se tocan: corregirlos automáticamente puede facturar de más.');
+
+            if (!$this->confirm('¿Aplicar la reparación en el router?', false)) {
+                $this->info('Reparación cancelada.');
+                return self::FAILURE;
+            }
+
+            $result = $integrity->repairMikrotikMismatch();
+
+            if ($skipped = ($result['skipped'] ?? null)) {
+                $this->warn("Reparación omitida: {$skipped}");
+                return self::FAILURE;
+            }
+
+            $this->info('Reparadas: ' . count($result['repaired']) . ' · Fallidas: ' . count($result['failed']));
+
+            if ($result['failed']) {
+                $this->line(json_encode($result['failed'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            }
+        }
 
         return self::FAILURE;
     }

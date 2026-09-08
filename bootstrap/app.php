@@ -115,21 +115,15 @@ return Application::configure(basePath: dirname(__DIR__))
         });
     })
     ->withSchedule(function (Schedule $schedule) {
-        $tz    = config('billing.timezone');
-        $sched = config('billing.schedule');
-
-        // Las automatizaciones con AutomationSetting (suspensión, facturación
-        // mensual, cobros automáticos, sync MikroTik) NO se registran aquí: las
-        // gestiona el scheduler dinámico de routes/console.php respetando el
-        // flag `enabled`. Registrarlas también aquí duplicaba la ejecución y
-        // hacía que la automatización siguiera corriendo aunque estuviese
-        // desactivada desde la UI.
-
-        // Reactivación automática de clientes suspendidos con saldo suficiente
-        // (sin contraparte en automation_settings).
-        $schedule->command('billing:reactivate')
-                 ->dailyAt($sched['auto_reactivate_time'])
-                 ->timezone($tz)
-                 ->withoutOverlapping();
+        // Todas las automatizaciones del ciclo de cortes (suspensión, cobros,
+        // facturación mensual, sync MikroTik y ahora también la reactivación
+        // diaria) se registran desde `automation_settings` a través del
+        // scheduler dinámico de routes/console.php, que respeta el flag
+        // `enabled`. Registrar cualquiera de ellas aquí duplicaría la ejecución
+        // y la mantendría viva aunque el operador la desactivara desde la UI.
+        //
+        // `billing:reactivate` sigue existiendo como comando para uso manual
+        // (--dry-run, --client-id), pero ya no se programa por esta vía: su
+        // contraparte automática es ProcessAutoReactivationSweep.
     })
     ->create();

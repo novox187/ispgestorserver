@@ -66,9 +66,16 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
     // Clientes
     Route::get('/clientes/summary', [ClientController::class, 'listSummary'])->middleware('permission:clientes.ver');
     Route::get('/clientes/full/{id}', [ClientController::class, 'showFull'])->middleware('permission:clientes.ver');
-    Route::post('/clientes/{id}/suspend', [ClientController::class, 'suspend'])->middleware('permission:clientes.editar');
+    // Cortar el servicio y dar de baja dejan al abonado sin conexión y cuestan
+    // una visita o una llamada deshacerlos: exigen volver a teclear la clave.
+    // Reactivar no la exige — restablecer el servicio no rompe nada.
+    Route::post('/clientes/{id}/suspend', [ClientController::class, 'suspend'])
+        ->middleware(['permission:clientes.editar', 'confirm_password']);
     Route::post('/clientes/{id}/activate', [ClientController::class, 'activate'])->middleware('permission:clientes.editar');
-    Route::post('/clientes/{id}/cancel', [ClientController::class, 'cancel'])->middleware('permission:clientes.editar');
+    Route::post('/clientes/{id}/cancel', [ClientController::class, 'cancel'])
+        ->middleware(['permission:clientes.editar', 'confirm_password']);
+    Route::get('/clientes/{id}/interrupciones', [ClientController::class, 'serviceInterruptions'])
+        ->middleware('permission:clientes.ver');
     Route::put('/clientes/{id}', [ClientController::class, 'update'])->middleware('permission:clientes.editar');
     Route::post('/clientes/crear', [ClienteController::class, 'store'])->middleware('permission:clientes.crear');
 

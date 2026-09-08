@@ -92,8 +92,10 @@ function makeOverdueInvoiceForClient(Client $client, string $dueDate): Invoice
 
 beforeEach(function () {
     $this->mock(MikroTikService::class, function (MockInterface $m) {
+        $m->shouldReceive('getSystemInfo')->andReturn(['uptime' => '1d']);
         $m->shouldReceive('addIpToAddressList')->andReturn(['success' => true]);
         $m->shouldReceive('removeIpFromAddressList')->andReturn(['success' => true]);
+        $m->shouldReceive('verifyAddressListEnforcement')->andReturn(['state' => 'enforced', 'entry_found' => true, 'filter_rule_found' => true]);
     });
 
     $this->mock(AutoBillingService::class, function (MockInterface $m) {
@@ -128,6 +130,7 @@ describe('Regla de negocio: protección de suspensión por lista blanca', functi
         app(ProcessClientSuspension::class)->handle(
             app(ClientSuspensionService::class),
             app(AutoBillingService::class),
+            app(MikroTikService::class),
         );
 
         $client->refresh();
@@ -149,6 +152,7 @@ describe('Regla de negocio: protección de suspensión por lista blanca', functi
         app(ProcessClientSuspension::class)->handle(
             app(ClientSuspensionService::class),
             app(AutoBillingService::class),
+            app(MikroTikService::class),
         );
 
         $client->refresh();
@@ -180,6 +184,7 @@ describe('Regla de negocio: protección de suspensión por lista blanca', functi
         app(ProcessClientSuspension::class)->handle(
             app(ClientSuspensionService::class),
             app(AutoBillingService::class),
+            app(MikroTikService::class),
         );
 
         $client->refresh();

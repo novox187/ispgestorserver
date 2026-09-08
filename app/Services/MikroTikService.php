@@ -362,6 +362,66 @@ public function getClientQueues(string $clientIp): array
         }
     }
 
+    /**
+     * Comprueba que un corte por address-list sea realmente efectivo.
+     *
+     * Escribir la IP en la lista es necesario pero no suficiente: si no existe
+     * una regla de /ip/firewall/filter habilitada que la referencie (borrada,
+     * deshabilitada, o nunca configurada), el cliente sigue navegando aunque
+     * la entrada exista. Este método es la comprobación que faltaba entre
+     * "se escribió en la lista" y "el tráfico se corta".
+     *
+     * @return array{state: string, entry_found: bool, filter_rule_found: bool, message?: string}
+     *   state: 'enforced' (entrada + regla activa) | 'no_filter_rule' (entrada
+     *   sin regla que la use) | 'entry_missing' (ni la entrada existe) |
+     *   'unverifiable' (el router no respondió a la comprobación).
+     */
+    public function verifyAddressListEnforcement(string $ip, string $listName): array
+    {
+        if (!$this->client) {
+            return ['state' => 'unverifiable', 'entry_found' => false, 'filter_rule_found' => false, 'message' => 'Cliente MikroTik no inicializado'];
+        }
+
+        try {
+            $print = new Query('/ip/firewall/address-list/print');
+            $print->where('list', $listName);
+            $print->where('address', $ip);
+            $entries = $this->client->query($print)->read();
+            $entryFound = !empty($entries);
+
+            if (!$entryFound) {
+                return ['state' => 'entry_missing', 'entry_found' => false, 'filter_rule_found' => false];
+            }
+
+            $filterRules = $this->client->query(new Query('/ip/firewall/filter/print'))->read();
+            $ruleFound = false;
+
+            foreach ($filterRules as $rule) {
+                $disabled = filter_var($rule['disabled'] ?? 'false', FILTER_VALIDATE_BOOLEAN);
+                if ($disabled) {
+                    continue;
+                }
+                $action = strtolower((string) ($rule['action'] ?? ''));
+                if (!in_array($action, ['drop', 'reject'], true)) {
+                    continue;
+                }
+                if (($rule['src-address-list'] ?? null) === $listName || ($rule['dst-address-list'] ?? null) === $listName) {
+                    $ruleFound = true;
+                    break;
+                }
+            }
+
+            return [
+                'state'             => $ruleFound ? 'enforced' : 'no_filter_rule',
+                'entry_found'       => true,
+                'filter_rule_found' => $ruleFound,
+            ];
+        } catch (\Throwable $e) {
+            Log::error('MikroTik Verify Enforcement Error: ' . $e->getMessage());
+            return ['state' => 'unverifiable', 'entry_found' => false, 'filter_rule_found' => false, 'message' => $e->getMessage()];
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Firewall filter & NAT sync
     // -------------------------------------------------------------------------

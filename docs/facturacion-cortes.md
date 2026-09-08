@@ -1,5 +1,59 @@
 # Facturación y cortes de servicio — fecha límite de emisión
 
+> **Ver también:** [`runbook-cortes.md`](runbook-cortes.md) — qué hacer ante cada
+> alerta del módulo (corte sin efecto en la red, router caído, IP que no
+> coincide, cliente cortado por error).
+
+## Verificación de efectividad del corte
+
+Escribir la IP en la address-list `morosos` **no** garantiza que el abonado deje
+de navegar: hace falta una regla de `/ip/firewall/filter` activa que use esa
+lista, y esa regla es configuración manual del router que el sistema no crea.
+
+Desde el endurecimiento del módulo, cada corte comprueba las dos cosas y guarda
+el resultado en `client_service_interruptions.enforcement_state`:
+
+| Estado | Significado |
+|---|---|
+| `enforced` | La entrada existe y una regla activa la aplica: el corte es real |
+| `no_filter_rule` | La IP entró en la lista, pero ninguna regla la bloquea |
+| `entry_missing` | El router no aceptó ni conserva la entrada |
+| `unverifiable` | El router no respondió a la comprobación |
+| `no_ip` | El cliente no tiene IP: solo se cortó en la base de datos |
+| `ip_mismatch` | La IP registrada no era la del cliente en el router: **no se bloqueó**, para no cortar a otro abonado |
+| `NULL` | Corte anterior a esta comprobación — no verificado |
+
+Los cortes que no llegan a `enforced` se suman al contador `errors` del resumen
+del worker, que es lo que hace que la notificación escale a severidad crítica en
+vez de enviar un ✅ mientras los clientes cortados siguen navegando. El operador
+los ve por cliente en *Ficha del cliente → Historial → Cortes de servicio*, y
+agregados con `php artisan billing:check-integrity`.
+
+## Garantías de la corrida automática
+
+- **Compuerta de salud**: si el router no responde al arrancar, la corrida se
+  aborta entera con alerta crítica. Antes suspendía a toda la cohorte solo en la
+  base de datos.
+- **Cohorte por fecha, no por estado**: se consideran facturas `pending` **y**
+  `failed` vencidas más allá de la gracia. Antes solo `failed`, lo que hacía que
+  desactivar Cobros Automáticos apagara los cortes en silencio.
+- **Una entrada por cliente**: la cohorte se agrupa por cliente y se procesa su
+  factura más antigua, con cota de lote (`BILLING_SUSPENSION_MAX_BATCH`).
+- **Lock por cliente**: las operaciones de servicio sobre un mismo cliente se
+  serializan, de modo que la corrida automática y una acción del operador no se
+  pisan.
+- **Horario separado**: el corte corre a las 04:00, dos horas después de los
+  cobros, sobre una cartera ya estabilizada.
+
+## Vía manual
+
+El corte y la baja desde el panel exigen **reconfirmar la contraseña** en el
+servidor (`confirm_password`), aceptan un **motivo** libre que queda en la
+auditoría y en la ventana de corte, y **respetan la lista blanca** — antes la
+protección solo frenaba a la vía automática. La reactivación no pide contraseña:
+restablecer el servicio no rompe nada.
+
+
 ## Problema que se corrige
 
 La facturación automática decidía la elegibilidad de un cliente mirando **solo su

@@ -631,6 +631,21 @@ class AutoBillingService
     public function processInvoicePayment(Invoice $invoice)
     {
         return DB::transaction(function () use ($invoice) {
+            // Bloqueo pesimista de la factura: auto_billing y client_suspension
+            // pueden procesar la misma factura en la misma ventana horaria desde
+            // workers distintos. Sin este lock, ambos la leen como pendiente y
+            // ambos intentan cobrarla.
+            $invoice = Invoice::whereKey($invoice->id)->lockForUpdate()->firstOrFail();
+
+            if ($invoice->status === Invoice::STATUS_PAID) {
+                return [
+                    'success'         => true,
+                    'message'         => 'La factura ya estaba pagada',
+                    'already_paid'    => true,
+                    'previous_status' => Invoice::STATUS_PAID,
+                ];
+            }
+
             $client = $invoice->client;
             $estadoAnterior = $invoice->status;
 

@@ -94,7 +94,7 @@ describe('Auditoría de cortes manuales fallidos', function () {
         $client   = Client::factory()->active()->create();
 
         $res = $this->actingAs($employee, 'sanctum')
-            ->postJson("/api/admin/clientes/{$client->id}/suspend");
+            ->postJson("/api/admin/clientes/{$client->id}/suspend", ['password' => 'password']);
 
         $res->assertStatus(500);
 
@@ -122,7 +122,7 @@ describe('Auditoría de cortes manuales fallidos', function () {
         $client   = Client::factory()->active()->create();
 
         $this->actingAs($employee, 'sanctum')
-            ->postJson("/api/admin/clientes/{$client->id}/suspend")
+            ->postJson("/api/admin/clientes/{$client->id}/suspend", ['password' => 'password'])
             ->assertStatus(503);
 
         $audit = Audit::forRecord('clients', $client->id)
@@ -166,8 +166,10 @@ describe('Trazabilidad de cortes automáticos y bajas', function () {
 
     beforeEach(function () {
         $this->mock(MikroTikService::class, function (MockInterface $m) {
+            $m->shouldReceive('getSystemInfo')->andReturn(['uptime' => '1d']);
             $m->shouldReceive('addIpToAddressList')->andReturn(['success' => true]);
             $m->shouldReceive('removeIpFromAddressList')->andReturn(['success' => true]);
+            $m->shouldReceive('verifyAddressListEnforcement')->andReturn(['state' => 'enforced', 'entry_found' => true, 'filter_rule_found' => true]);
         });
     });
 

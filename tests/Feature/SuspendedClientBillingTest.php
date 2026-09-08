@@ -79,8 +79,10 @@ function makePendingInvoiceCutTest(Client $client, float $total = 30.00): Invoic
 beforeEach(function () {
     // Aislar MikroTik: las suspensiones/reactivaciones no deben tocar el router.
     $this->mock(MikroTikService::class, function (MockInterface $m) {
+        $m->shouldReceive('getSystemInfo')->andReturn(['uptime' => '1d']);
         $m->shouldReceive('addIpToAddressList')->andReturn(['success' => true]);
         $m->shouldReceive('removeIpFromAddressList')->andReturn(['success' => true]);
+        $m->shouldReceive('verifyAddressListEnforcement')->andReturn(['state' => 'enforced', 'entry_found' => true, 'filter_rule_found' => true]);
     });
 });
 

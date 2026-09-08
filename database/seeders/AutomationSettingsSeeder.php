@@ -18,7 +18,9 @@ class AutomationSettingsSeeder extends Seeder
                 'queue'       => 'suspensions',
                 'enabled'     => true,
                 'schedule_type'   => 'daily',
-                'schedule_config' => ['time' => '02:00'],
+                // Dos horas después de los cobros: el corte debe mirar una
+                // cartera ya estabilizada, no competir con quien la cobra.
+                'schedule_config' => ['time' => '04:00'],
                 'params'          => ['grace_days' => 3],
                 'params_schema'   => [
                     'grace_days' => [
@@ -30,6 +32,18 @@ class AutomationSettingsSeeder extends Seeder
                         'required'    => true,
                     ],
                 ],
+            ],
+            [
+                'key'         => 'auto_reactivation',
+                'name'        => 'Reactivación Automática de Clientes',
+                'description' => 'Revisa los clientes suspendidos y reactiva a los que ya no tienen deuda vencida. Complementa a la reactivación inmediata que dispara cada recarga de billetera.',
+                'job_class'   => \App\Jobs\ProcessAutoReactivationSweep::class,
+                'queue'       => 'reactivations',
+                'enabled'     => true,
+                'schedule_type'   => 'daily',
+                'schedule_config' => ['time' => '10:00'],
+                'params'          => [],
+                'params_schema'   => [],
             ],
             [
                 'key'         => 'monthly_invoices',

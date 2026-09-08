@@ -39,14 +39,19 @@ class ProcessAutoReactivation implements ShouldQueue
             return; // Ya está activo, nada que hacer
         }
 
+        // Solo la deuda VENCIDA condiciona la reactivación. Antes se intentaban
+        // pagar todas las facturas emitidas, incluidas las que aún no vencían:
+        // un cliente que recargaba lo justo para saldar lo que debía seguía
+        // cortado porque el saldo no alcanzaba para la factura del mes siguiente.
         $pendingInvoices = Invoice::where('client_id', $this->client->id)
             ->whereIn('status', [Invoice::STATUS_PENDING, Invoice::STATUS_FAILED])
+            ->whereDate('due_date', '<=', now()->toDateString())
             ->orderBy('due_date')
             ->get();
 
         if ($pendingInvoices->isEmpty()) {
-            // Sin facturas pendientes: reactivar directamente
-            $suspension->reactivateClient($this->client, 'Sin facturas pendientes tras recarga');
+            // Sin deuda vencida: reactivar directamente
+            $suspension->reactivateClient($this->client, 'Sin deuda vencida tras recarga');
             return;
         }
 

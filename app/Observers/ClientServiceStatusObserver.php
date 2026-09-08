@@ -5,6 +5,7 @@ namespace App\Observers;
 use App\Models\Client;
 use App\Models\ClientServiceInterruption;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Registra automáticamente las ventanas de corte del servicio.
@@ -66,7 +67,7 @@ class ClientServiceStatusObserver
             return;
         }
 
-        ClientServiceInterruption::create([
+        $datos = [
             'client_id'         => $client->id,
             'type'              => $this->typeFor($client->service_status),
             'suspended_at'      => now(),
@@ -74,7 +75,41 @@ class ClientServiceStatusObserver
             'suspended_by'      => $context['executor'] ?? $this->defaultExecutor(),
             'invoice_id'        => $context['invoice_id'] ?? null,
             'source'            => $context['source'] ?? 'status_change',
-        ]);
+        ];
+
+        // Solo los flujos que hablan con MikroTik saben si el corte llegó a
+        // aplicarse. Un cambio de estado por otra vía lo deja en NULL, que
+        // significa "sin verificar", no "sin efecto".
+        //
+        // El despliegue arranca el contenedor nuevo ANTES de migrar, así que
+        // hay unos segundos de código nuevo sobre esquema viejo: sin esta
+        // comprobación, cualquier corte en esa ventana moría con "Unknown
+        // column". Es un puente de despliegue — se puede quitar cuando la
+        // migración 2026_09_08_000001 esté aplicada en todos los entornos.
+        if (self::supportsEnforcementState()) {
+            $datos['enforcement_state'] = $context['enforcement_state'] ?? null;
+        }
+
+        ClientServiceInterruption::create($datos);
+    }
+
+    /**
+     * Se resuelve una vez por proceso: `hasColumn` consulta information_schema
+     * y esto corre en cada corte.
+     */
+    private static ?bool $enforcementStateSupported = null;
+
+    private static function supportsEnforcementState(): bool
+    {
+        if (self::$enforcementStateSupported === null) {
+            try {
+                self::$enforcementStateSupported = Schema::hasColumn('client_service_interruptions', 'enforcement_state');
+            } catch (\Throwable $e) {
+                self::$enforcementStateSupported = false;
+            }
+        }
+
+        return self::$enforcementStateSupported;
     }
 
     private function closeOpenInterruptions(Client $client): void

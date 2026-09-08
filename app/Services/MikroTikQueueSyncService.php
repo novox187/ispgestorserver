@@ -431,6 +431,26 @@ class MikroTikQueueSyncService
         return $result[0] ?? null;
     }
 
+    /**
+     * IP objetivo de la cola simple del cliente en MikroTik, o null si no
+     * tiene cola (nunca se sincronizó, o el router no responde).
+     *
+     * Usado como comprobación de titularidad antes de cortar: la cola es la
+     * fuente de verdad de qué IP corresponde a qué cliente en el router, más
+     * fiable que `clients.ip` cuando hubo una reasignación DHCP no reflejada
+     * todavía en la base de datos.
+     */
+    public function clientQueueTargetIp(Client $client): ?string
+    {
+        $queue = $this->findQueueByName($this->buildClientQueueName($client));
+        if (!$queue || empty($queue['target'])) {
+            return null;
+        }
+
+        // El target puede venir como "192.168.1.10/32" — nos interesa solo la IP.
+        return explode('/', (string) $queue['target'])[0];
+    }
+
     public function createSimpleQueue(array $params): array
     {
         $query = new Query('/queue/simple/add');

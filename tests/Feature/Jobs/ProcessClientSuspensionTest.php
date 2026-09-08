@@ -74,8 +74,10 @@ function makeOverdueClientWithFailedInvoice(int $graceDays = 3): Client
 beforeEach(function () {
     // Aislar el job de la red real
     $this->mock(MikroTikService::class, function (MockInterface $m) {
+        $m->shouldReceive('getSystemInfo')->andReturn(['uptime' => '1d']);
         $m->shouldReceive('addIpToAddressList')->andReturn(['success' => true]);
         $m->shouldReceive('removeIpFromAddressList')->andReturn(['success' => true]);
+        $m->shouldReceive('verifyAddressListEnforcement')->andReturn(['state' => 'enforced', 'entry_found' => true, 'filter_rule_found' => true]);
     });
 
     // El último intento de cobro siempre falla (forzando el camino de suspensión)
@@ -95,7 +97,8 @@ describe('ProcessClientSuspension::handle()', function () {
 
         app(ProcessClientSuspension::class)->handle(
             app(ClientSuspensionService::class),
-            app(AutoBillingService::class)
+            app(AutoBillingService::class),
+            app(MikroTikService::class)
         );
 
         expect(strtoupper($client->fresh()->service_status))->toBe('SUSPENDED');
@@ -109,7 +112,8 @@ describe('ProcessClientSuspension::handle()', function () {
 
         app(ProcessClientSuspension::class)->handle(
             app(ClientSuspensionService::class),
-            app(AutoBillingService::class)
+            app(AutoBillingService::class),
+            app(MikroTikService::class)
         );
 
         // El estado del cliente NO debe haber cambiado
@@ -125,7 +129,8 @@ describe('ProcessClientSuspension::handle()', function () {
 
         app(ProcessClientSuspension::class)->handle(
             app(ClientSuspensionService::class),
-            app(AutoBillingService::class)
+            app(AutoBillingService::class),
+            app(MikroTikService::class)
         );
 
         expect($client->fresh()->service_status)->toBe($statusBefore);
@@ -138,7 +143,8 @@ describe('ProcessClientSuspension::handle()', function () {
 
         app(ProcessClientSuspension::class)->handle(
             app(ClientSuspensionService::class),
-            app(AutoBillingService::class)
+            app(AutoBillingService::class),
+            app(MikroTikService::class)
         );
 
         // El log de estado debe incluir enabled=false y los params
@@ -172,7 +178,8 @@ describe('ProcessClientSuspension::handle()', function () {
 
         app(ProcessClientSuspension::class)->handle(
             app(ClientSuspensionService::class),
-            app(AutoBillingService::class)
+            app(AutoBillingService::class),
+            app(MikroTikService::class)
         );
 
         expect($client->fresh()->service_status)->toBe($statusBefore);

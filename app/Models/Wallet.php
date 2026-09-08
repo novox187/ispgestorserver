@@ -93,27 +93,38 @@ class Wallet extends Model
 
     /**
      * Realizar un pago
+     *
+     * Bloquea la fila de la billetera (SELECT ... FOR UPDATE) antes de leer el
+     * saldo: sin esto, dos workers procesando la misma billetera a la vez
+     * (p. ej. auto_billing y client_suspension corriendo en la misma ventana)
+     * pueden leer el mismo saldo "suficiente" y descontarlo dos veces.
      */
     public function makePayment($amount, $service, $description = "")
     {
-        if ($this->balance < $amount) {
-            throw new \Exception('Saldo insuficiente para realizar el pago');
-        }
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($amount, $service, $description) {
+            $wallet = self::whereKey($this->id)->lockForUpdate()->first();
 
-        $this->balance -= $amount;
-        $this->save();
+            if (!$wallet || $wallet->balance < $amount) {
+                throw new \Exception('Saldo insuficiente para realizar el pago');
+            }
 
-        // Crear transacción de pago
-        $this->transactions()->create([
-            'type' => 'payment',
-            'amount' => $amount,
-            'description' => $description ?: "Pago para: " . $service,
-            'reference' => 'PAY_' . uniqid(),
-            'status' => 'completed',
-            'metadata' => ['service' => $service]
-        ]);
+            $wallet->balance -= $amount;
+            $wallet->save();
 
-        return $this;
+            // Crear transacción de pago
+            $wallet->transactions()->create([
+                'type' => 'payment',
+                'amount' => $amount,
+                'description' => $description ?: "Pago para: " . $service,
+                'reference' => 'PAY_' . uniqid(),
+                'status' => 'completed',
+                'metadata' => ['service' => $service]
+            ]);
+
+            $this->balance = $wallet->balance;
+
+            return $this;
+        });
     }
 
     /**

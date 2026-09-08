@@ -22,6 +22,29 @@ class ClientServiceInterruption extends Model
     public const TYPE_SUSPENSION   = 'suspension';
     public const TYPE_CANCELLATION = 'cancellation';
 
+    /**
+     * Resultado de la comprobación de que el corte es efectivo en la red.
+     * Solo ENFORCED significa que el abonado dejó de navegar; los demás
+     * estados describen cortes aplicados en la base de datos pero no (o no
+     * verificadamente) en el router.
+     */
+    public const ENFORCEMENT_ENFORCED       = 'enforced';
+    public const ENFORCEMENT_NO_FILTER_RULE = 'no_filter_rule';
+    public const ENFORCEMENT_ENTRY_MISSING  = 'entry_missing';
+    public const ENFORCEMENT_UNVERIFIABLE   = 'unverifiable';
+    public const ENFORCEMENT_NO_IP          = 'no_ip';
+    public const ENFORCEMENT_IP_MISMATCH    = 'ip_mismatch';
+    public const ENFORCEMENT_NOT_APPLICABLE = 'not_applicable';
+
+    /** Estados en los que el cliente sigue navegando pese a estar cortado en BD. */
+    public const ENFORCEMENT_FAILED_STATES = [
+        self::ENFORCEMENT_NO_FILTER_RULE,
+        self::ENFORCEMENT_ENTRY_MISSING,
+        self::ENFORCEMENT_UNVERIFIABLE,
+        self::ENFORCEMENT_NO_IP,
+        self::ENFORCEMENT_IP_MISMATCH,
+    ];
+
     protected $fillable = [
         'client_id',
         'type',
@@ -33,6 +56,7 @@ class ClientServiceInterruption extends Model
         'reactivated_by',
         'invoice_id',
         'source',
+        'enforcement_state',
     ];
 
     protected $casts = [
@@ -59,6 +83,21 @@ class ClientServiceInterruption extends Model
     public function scopeOpen($query)
     {
         return $query->whereNull('reactivated_at');
+    }
+
+    /**
+     * Cortes registrados en BD que NO se pudieron confirmar en la red: el
+     * cliente deja de facturarse pero puede seguir navegando. Es la consulta
+     * que alimenta la alerta operativa y la métrica de cortes efectivos.
+     */
+    public function scopeNotEnforced($query)
+    {
+        return $query->whereIn('enforcement_state', self::ENFORCEMENT_FAILED_STATES);
+    }
+
+    public function isEnforced(): bool
+    {
+        return $this->enforcement_state === self::ENFORCEMENT_ENFORCED;
     }
 
     /**

@@ -68,8 +68,10 @@ function makeFailedInvoiceWithDueDate(string $dueDate): Invoice
 beforeEach(function () {
     // Aislar MikroTik
     $this->mock(MikroTikService::class, function (MockInterface $m) {
+        $m->shouldReceive('getSystemInfo')->andReturn(['uptime' => '1d']);
         $m->shouldReceive('addIpToAddressList')->andReturn(['success' => true]);
         $m->shouldReceive('removeIpFromAddressList')->andReturn(['success' => true]);
+        $m->shouldReceive('verifyAddressListEnforcement')->andReturn(['state' => 'enforced', 'entry_found' => true, 'filter_rule_found' => true]);
     });
 
     // El último intento de cobro siempre falla — forzar suspensión
@@ -93,7 +95,8 @@ describe('Activación puntual de la suspensión al cumplirse la fecha de vencimi
 
         app(ProcessClientSuspension::class)->handle(
             app(ClientSuspensionService::class),
-            app(AutoBillingService::class)
+            app(AutoBillingService::class),
+            app(MikroTikService::class)
         );
 
         expect(strtoupper($client->fresh()->service_status))->not->toBe('SUSPENDED');
@@ -110,7 +113,8 @@ describe('Activación puntual de la suspensión al cumplirse la fecha de vencimi
 
         app(ProcessClientSuspension::class)->handle(
             app(ClientSuspensionService::class),
-            app(AutoBillingService::class)
+            app(AutoBillingService::class),
+            app(MikroTikService::class)
         );
 
         expect(strtoupper($client->fresh()->service_status))->toBe('SUSPENDED');
@@ -126,7 +130,8 @@ describe('Activación puntual de la suspensión al cumplirse la fecha de vencimi
 
         app(ProcessClientSuspension::class)->handle(
             app(ClientSuspensionService::class),
-            app(AutoBillingService::class)
+            app(AutoBillingService::class),
+            app(MikroTikService::class)
         );
 
         expect(strtoupper($client->fresh()->service_status))->toBe('SUSPENDED');
@@ -143,7 +148,8 @@ describe('Activación puntual de la suspensión al cumplirse la fecha de vencimi
         Carbon::setTestNow(Carbon::parse('2026-03-02 02:00:00'));
         app(ProcessClientSuspension::class)->handle(
             app(ClientSuspensionService::class),
-            app(AutoBillingService::class)
+            app(AutoBillingService::class),
+            app(MikroTikService::class)
         );
         expect(strtoupper($client->fresh()->service_status))->not->toBe('SUSPENDED');
 
@@ -151,7 +157,8 @@ describe('Activación puntual de la suspensión al cumplirse la fecha de vencimi
         Carbon::setTestNow(Carbon::parse('2026-03-03 02:00:00'));
         app(ProcessClientSuspension::class)->handle(
             app(ClientSuspensionService::class),
-            app(AutoBillingService::class)
+            app(AutoBillingService::class),
+            app(MikroTikService::class)
         );
         expect(strtoupper($client->fresh()->service_status))->toBe('SUSPENDED');
 
@@ -167,7 +174,8 @@ describe('Activación puntual de la suspensión al cumplirse la fecha de vencimi
         Carbon::setTestNow(Carbon::parse('2027-01-03 02:00:00'));
         app(ProcessClientSuspension::class)->handle(
             app(ClientSuspensionService::class),
-            app(AutoBillingService::class)
+            app(AutoBillingService::class),
+            app(MikroTikService::class)
         );
         expect(strtoupper($client->fresh()->service_status))->not->toBe('SUSPENDED');
 
@@ -175,7 +183,8 @@ describe('Activación puntual de la suspensión al cumplirse la fecha de vencimi
         Carbon::setTestNow(Carbon::parse('2027-01-04 02:00:00'));
         app(ProcessClientSuspension::class)->handle(
             app(ClientSuspensionService::class),
-            app(AutoBillingService::class)
+            app(AutoBillingService::class),
+            app(MikroTikService::class)
         );
         expect(strtoupper($client->fresh()->service_status))->toBe('SUSPENDED');
 
@@ -194,7 +203,8 @@ describe('Auditoría SUSPEND_AUTO_OP con trazabilidad de factura', function () {
 
         app(ProcessClientSuspension::class)->handle(
             app(ClientSuspensionService::class),
-            app(AutoBillingService::class)
+            app(AutoBillingService::class),
+            app(MikroTikService::class)
         );
 
         $audit = Audit::where('table_name', 'clients')

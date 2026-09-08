@@ -7,7 +7,9 @@ use Illuminate\Http\Request;
 use App\Models\Client;
 use App\Models\Plan;
 use App\Models\Audit;
+use App\Models\ClientServiceInterruption;
 use App\Services\ClientSuspensionService;
+use App\Services\ClientWhitelistService;
 use App\Services\MikroTikQueueSyncService;
 use App\Services\MikroTikService;
 use App\Services\IspCapacityService;
@@ -423,10 +425,14 @@ class ClientController extends Controller
     /**
      * Suspender cliente: Actualiza DB, bloquea en Mikrotik y registra auditoría
      */
-    public function suspend(Request $request, $id, MikroTikService $mikrotik)
+    public function suspend(Request $request, $id, MikroTikService $mikrotik, ClientWhitelistService $whitelist)
     {
         Log::info("Iniciando proceso de suspensión para cliente ID: {$id}", ['user' => Auth::id()]);
-        
+
+        $request->validate([
+            'reason' => ['nullable', 'string', 'max:500'],
+        ]);
+
         try {
             $client = Client::findOrFail($id);
         } catch (\Exception $e) {
@@ -440,9 +446,67 @@ class ClientController extends Controller
             return response()->json(['success' => false, 'message' => 'El cliente ya está suspendido'], 400);
         }
 
+        // La lista blanca protegía únicamente contra el corte automático: por
+        // aquí se cortaba igual a un cliente que un super admin había marcado
+        // como intocable. Ahora la protección vale para las dos vías.
+        if ($whitelist->isProtected($client->id)) {
+            $entry = $whitelist->activeEntryFor($client->id);
+
+            Audit::create([
+                'table_name' => 'clients',
+                'operation'  => 'SUSPEND_BLOCKED_WHITELIST',
+                'record_id'  => (string) $client->id,
+                'old_values' => ['service_status' => $client->service_status],
+                'new_values' => [
+                    'service_status'       => $client->service_status,
+                    'reason'               => $request->input('reason'),
+                    'whitelist_id'         => $entry?->id,
+                    'whitelist_reason'     => $entry?->reason,
+                    'whitelist_expires_at' => optional($entry?->expires_at)->toIso8601String(),
+                    'executor'             => $this->currentExecutorName(),
+                    'timestamp'            => now()->toIso8601String(),
+                ],
+                'user_id'    => Auth::id(),
+                'user_type'  => Auth::user() ? get_class(Auth::user()) : null,
+                'ip_address' => $request->ip(),
+            ]);
+
+            Log::warning("Suspensión manual bloqueada por lista blanca para cliente {$id}.");
+
+            return response()->json([
+                'success' => false,
+                'code'    => 'WHITELISTED',
+                'message' => 'El cliente está protegido por la lista blanca. Retíralo de la lista antes de suspenderlo.',
+            ], 409);
+        }
+
         if (!$client->ip) {
              Log::warning("Intento de suspender cliente sin IP: {$id}");
              return response()->json(['success' => false, 'message' => 'El cliente no tiene IP asignada para bloquear'], 400);
+        }
+
+        // La IP registrada debe seguir siendo la del cliente: bloquear una IP
+        // reasignada corta a otro abonado que está al corriente de pago.
+        $queueIp = $this->clientQueueTargetIp($client);
+        if ($queueIp !== null && $queueIp !== $client->ip) {
+            Log::error("Suspensión manual abortada: la IP del cliente {$id} no coincide con su cola en el router.", [
+                'client_ip'       => $client->ip,
+                'queue_target_ip' => $queueIp,
+            ]);
+
+            $this->auditFailedServiceOperation(
+                'SUSPEND_FAILED_OP',
+                $client,
+                $request,
+                'ip_ownership',
+                "La IP {$client->ip} no coincide con la cola del cliente en el router ({$queueIp}).",
+            );
+
+            return response()->json([
+                'success' => false,
+                'code'    => 'IP_MISMATCH',
+                'message' => "La IP registrada ({$client->ip}) no coincide con la del cliente en el router ({$queueIp}). Corrige la IP antes de cortar para no bloquear a otro abonado.",
+            ], 409);
         }
 
         // Validar conexión Mikrotik
@@ -469,8 +533,8 @@ class ClientController extends Controller
             Log::info("Enviando comando a Mikrotik para agregar IP {$client->ip} a address-list 'morosos'");
             
             $mkResult = $mikrotik->addIpToAddressList(
-                $client->ip, 
-                'morosos', 
+                $client->ip,
+                $this->morososList(),
                 "Suspendido por falta de pago - Cliente ID: {$client->id} - " . now()->format('Y-m-d H:i')
             );
 
@@ -478,16 +542,25 @@ class ClientController extends Controller
                 Log::error("Fallo Mikrotik: " . json_encode($mkResult));
                 throw new \Exception("Fallo al agregar a Address List en Mikrotik: " . $mkResult['message']);
             }
-            
-            Log::info("Mikrotik OK: IP agregada/verificada en lista morosos.");
+
+            Log::info("Mikrotik OK: IP agregada/verificada en lista {$this->morososList()}.");
+
+            // La entrada existe, pero eso no significa que el tráfico se corte:
+            // hace falta una regla de firewall activa que use la lista.
+            $enforcementState = $this->verifyEnforcement($mikrotik, $client);
+
+            if ($enforcementState !== ClientServiceInterruption::ENFORCEMENT_ENFORCED) {
+                Log::error("Suspensión manual del cliente {$id}: el corte NO se pudo confirmar en la red ({$enforcementState}).");
+            }
 
             // 2. Actualizar estado en DB
             // El observer abre la ventana de corte (fecha límite de facturación)
             // con el ejecutor manual para trazabilidad.
             $client->serviceStatusChangeContext = [
-                'reason'   => 'Suspensión manual desde el panel de administración',
-                'executor' => 'employee:' . (Auth::id() ?? '?') . ' (' . (Auth::user()->name ?? 'Unknown') . ')',
-                'source'   => 'manual',
+                'reason'            => $request->input('reason') ?: 'Suspensión manual desde el panel de administración',
+                'executor'          => 'employee:' . (Auth::id() ?? '?') . ' (' . $this->currentExecutorName() . ')',
+                'source'            => 'manual',
+                'enforcement_state' => $enforcementState,
             ];
             $client->service_status = 'suspended';
             $client->save(); // Esto disparará el trait Auditable para el cambio de estado
@@ -502,11 +575,13 @@ class ClientController extends Controller
                 'new_values' => [
                     'service_status' => 'suspended',
                     'ip' => $client->ip,
+                    'reason' => $request->input('reason') ?: 'Suspensión manual desde el panel de administración',
                     'mikrotik_operation' => 'add_to_address_list',
-                    'mikrotik_list' => 'morosos',
+                    'mikrotik_list' => $this->morososList(),
                     'mikrotik_response' => $mkResult,
+                    'enforcement_state' => $enforcementState,
                     'timestamp' => now()->toIso8601String(),
-                    'executor' => Auth::user()->name ?? 'Unknown'
+                    'executor' => $this->currentExecutorName(),
                 ],
                 'user_id' => Auth::id(),
                 'user_type' => Auth::user() ? get_class(Auth::user()) : null,
@@ -594,22 +669,22 @@ class ClientController extends Controller
             Log::info("Enviando comando a Mikrotik para remover IP {$client->ip} de address-list 'morosos'");
             
             $mkResult = $mikrotik->removeIpFromAddressList(
-                $client->ip, 
-                'morosos'
+                $client->ip,
+                $this->morososList()
             );
 
             if (!$mkResult['success']) {
                 Log::error("Fallo Mikrotik al remover: " . json_encode($mkResult));
                 throw new \Exception("Fallo al remover de Address List en Mikrotik: " . $mkResult['message']);
             }
-            
-            Log::info("Mikrotik OK: IP removida de lista morosos.");
+
+            Log::info("Mikrotik OK: IP removida de lista {$this->morososList()}.");
 
             // 2. Actualizar estado en DB
             // El observer cierra la ventana de corte: la facturación se reanuda.
             $client->serviceStatusChangeContext = [
-                'reason'   => 'Activación manual desde el panel de administración',
-                'executor' => 'employee:' . (Auth::id() ?? '?') . ' (' . (Auth::user()->name ?? 'Unknown') . ')',
+                'reason'   => $request->input('reason') ?: 'Activación manual desde el panel de administración',
+                'executor' => 'employee:' . (Auth::id() ?? '?') . ' (' . $this->currentExecutorName() . ')',
                 'source'   => 'manual',
             ];
             $client->service_status = 'active';
@@ -626,10 +701,10 @@ class ClientController extends Controller
                     'service_status' => 'active',
                     'ip' => $client->ip,
                     'mikrotik_operation' => 'remove_from_address_list',
-                    'mikrotik_list' => 'morosos',
+                    'mikrotik_list' => $this->morososList(),
                     'mikrotik_response' => $mkResult,
                     'timestamp' => now()->toIso8601String(),
-                    'executor' => Auth::user()->name ?? 'Unknown'
+                    'executor' => $this->currentExecutorName(),
                 ],
                 'user_id' => Auth::id(),
                 'user_type' => Auth::user() ? get_class(Auth::user()) : null,
@@ -727,6 +802,127 @@ class ClientController extends Controller
      * (suspensión/activación). Se ejecuta fuera de la transacción principal
      * y nunca lanza: un fallo aquí no debe alterar la respuesta al cliente.
      */
+    /**
+     * Historial de cortes del cliente.
+     *
+     * `client_service_interruptions` era el mejor dato del módulo y no se podía
+     * consultar desde ningún sitio: para responder "¿cuántas veces se le cortó
+     * y por qué?" había que leer auditoría cruda o entrar por tinker.
+     */
+    public function serviceInterruptions(Request $request, $id)
+    {
+        $client = Client::find($id);
+
+        if (!$client) {
+            return response()->json(['success' => false, 'message' => 'Cliente no encontrado'], 404);
+        }
+
+        $interruptions = $client->serviceInterruptions()
+            ->with('invoice:id,invoice_number,issue_date,due_date,total_amount')
+            ->orderByDesc('suspended_at')
+            ->get()
+            ->map(function (ClientServiceInterruption $i) {
+                $end = $i->reactivated_at ?? now();
+
+                return [
+                    'id'                  => $i->id,
+                    'type'                => $i->type,
+                    'suspended_at'        => $i->suspended_at?->toIso8601String(),
+                    'reactivated_at'      => $i->reactivated_at?->toIso8601String(),
+                    'is_open'             => $i->reactivated_at === null,
+                    'duration_hours'      => $i->suspended_at ? round($i->suspended_at->diffInMinutes($end) / 60, 1) : null,
+                    'suspension_reason'   => $i->suspension_reason,
+                    'reactivation_reason' => $i->reactivation_reason,
+                    'suspended_by'        => $i->suspended_by,
+                    'reactivated_by'      => $i->reactivated_by,
+                    'source'              => $i->source,
+                    'enforcement_state'   => $i->enforcement_state,
+                    // NULL = corte anterior a la verificación de efectividad;
+                    // no se puede afirmar que fuese efectivo ni que no lo fuese.
+                    'enforced'            => $i->enforcement_state === null
+                        ? null
+                        : $i->isEnforced(),
+                    'invoice'             => $i->invoice ? [
+                        'id'             => $i->invoice->id,
+                        'invoice_number' => $i->invoice->invoice_number,
+                        'due_date'       => $i->invoice->due_date,
+                        'total_amount'   => $i->invoice->total_amount,
+                    ] : null,
+                ];
+            });
+
+        return response()->json([
+            'success' => true,
+            'data'    => $interruptions,
+            'summary' => [
+                'total'          => $interruptions->count(),
+                'open'           => $interruptions->where('is_open', true)->count(),
+                'not_enforced'   => $interruptions->where('enforced', false)->count(),
+                'total_hours'    => round((float) $interruptions->sum('duration_hours'), 1),
+            ],
+        ]);
+    }
+
+    /**
+     * Nombre del operador autenticado.
+     *
+     * `Employee` guarda el nombre en `nombre`, no en `name`: leer `->name`
+     * devolvía null y toda la auditoría de cortes manuales quedaba firmada
+     * como "Unknown".
+     */
+    private function currentExecutorName(): string
+    {
+        $user = Auth::user();
+
+        if (!$user) {
+            return 'Unknown';
+        }
+
+        return $user->nombre ?? $user->name ?? 'Unknown';
+    }
+
+    /** Nombre de la address-list de morosos (centralizado en config/billing.php). */
+    private function morososList(): string
+    {
+        return (string) config('billing.morosos_list', 'morosos');
+    }
+
+    /**
+     * IP con la que el cliente figura en el router, o null si no hay cola con
+     * la que contrastar (o el router no responde). Nunca lanza: la ausencia de
+     * evidencia no debe bloquear la operación.
+     */
+    private function clientQueueTargetIp(Client $client): ?string
+    {
+        try {
+            return app(MikroTikQueueSyncService::class)->clientQueueTargetIp($client);
+        } catch (\Throwable $e) {
+            Log::warning("No se pudo verificar la titularidad de la IP del cliente {$client->id}: " . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Comprueba que el corte sea efectivo en la red (entrada en la lista + regla
+     * de firewall activa que la use). Informativo: no bloquea la operación.
+     */
+    private function verifyEnforcement(MikroTikService $mikrotik, Client $client): string
+    {
+        try {
+            $check = $mikrotik->verifyAddressListEnforcement($client->ip, $this->morososList());
+
+            return match ($check['state'] ?? 'unverifiable') {
+                'enforced'       => ClientServiceInterruption::ENFORCEMENT_ENFORCED,
+                'no_filter_rule' => ClientServiceInterruption::ENFORCEMENT_NO_FILTER_RULE,
+                'entry_missing'  => ClientServiceInterruption::ENFORCEMENT_ENTRY_MISSING,
+                default          => ClientServiceInterruption::ENFORCEMENT_UNVERIFIABLE,
+            };
+        } catch (\Throwable $e) {
+            Log::warning("No se pudo verificar la efectividad del corte del cliente {$client->id}: " . $e->getMessage());
+            return ClientServiceInterruption::ENFORCEMENT_UNVERIFIABLE;
+        }
+    }
+
     private function auditFailedServiceOperation(string $operation, Client $client, Request $request, string $stage, string $error): void
     {
         try {
@@ -741,7 +937,7 @@ class ClientController extends Controller
                     'failed_stage'   => $stage,
                     'error'          => $error,
                     'timestamp'      => now()->toIso8601String(),
-                    'executor'       => Auth::user()->name ?? 'Unknown',
+                    'executor'       => $this->currentExecutorName(),
                 ],
                 'user_id'    => Auth::id(),
                 'user_type'  => Auth::user() ? get_class(Auth::user()) : null,

@@ -187,6 +187,104 @@ class BillingIntegrityService
             ->all();
     }
 
+    /** Nombre de la address-list de morosos (centralizado en config/billing.php). */
+    private function morososList(): string
+    {
+        return (string) config('billing.morosos_list', 'morosos');
+    }
+
+    /**
+     * Repara las dos desalineaciones seguras entre la BD y el router.
+     *
+     * La conciliación era estrictamente de solo lectura: detectaba el desajuste
+     * y lo notificaba, pero repararlo era trabajo manual sin procedimiento y sin
+     * plazo. Solo se corrigen los dos casos en los que la base de datos es la
+     * autoridad indiscutible y la acción es reversible:
+     *
+     *   - cliente con servicio vigente bloqueado en el router → se desbloquea
+     *     (está pagando y no navega: el daño corre mientras no se corrija);
+     *   - cliente suspendido que no está en la lista → se bloquea.
+     *
+     * NO toca los invariantes 1-4: ahí el desajuste está en la propia base de
+     * datos y "arreglarlo" automáticamente puede facturar de más o borrar una
+     * ventana de corte legítima. Esos siguen siendo decisión humana.
+     *
+     * @return array{repaired: array, failed: array, skipped?: string}
+     */
+    public function repairMikrotikMismatch(?int $employeeId = null, ?string $ipAddress = null): array
+    {
+        $findings = $this->mikrotikMorososMismatch();
+
+        if (isset($findings['skipped'])) {
+            return ['repaired' => [], 'failed' => [], 'skipped' => $findings['skipped']];
+        }
+
+        $mikrotik = app(MikroTikService::class);
+        $list     = $this->morososList();
+        $repaired = [];
+        $failed   = [];
+
+        foreach ($findings['in_morosos_not_suspended'] ?? [] as $row) {
+            try {
+                $result = $mikrotik->removeIpFromAddressList($row['ip'], $list);
+                $entry  = $row + ['action' => 'unblock', 'result' => $result];
+
+                if ($result['success'] ?? false) {
+                    $repaired[] = $entry;
+                } else {
+                    $failed[] = $entry;
+                }
+            } catch (\Throwable $e) {
+                $failed[] = $row + ['action' => 'unblock', 'error' => $e->getMessage()];
+            }
+        }
+
+        foreach ($findings['suspended_not_in_morosos'] ?? [] as $row) {
+            try {
+                $result = $mikrotik->addIpToAddressList(
+                    $row['ip'],
+                    $list,
+                    "Reparación de conciliación - Cliente ID: {$row['client_id']} - " . now()->format('Y-m-d H:i')
+                );
+                $entry = $row + ['action' => 'block', 'result' => $result];
+
+                if ($result['success'] ?? false) {
+                    $repaired[] = $entry;
+                } else {
+                    $failed[] = $entry;
+                }
+            } catch (\Throwable $e) {
+                $failed[] = $row + ['action' => 'block', 'error' => $e->getMessage()];
+            }
+        }
+
+        if ($repaired || $failed) {
+            Audit::create([
+                'table_name' => 'clients',
+                'operation'  => 'BILLING_INTEGRITY_REPAIR',
+                'record_id'  => 'mikrotik_morosos',
+                'old_values' => ['findings' => $findings],
+                'new_values' => [
+                    'repaired'  => $repaired,
+                    'failed'    => $failed,
+                    'list'      => $list,
+                    'executor'  => $employeeId ? "employee:{$employeeId}" : 'system',
+                    'timestamp' => now()->toIso8601String(),
+                ],
+                'user_id'    => $employeeId,
+                'user_type'  => $employeeId ? \App\Models\Employee::class : null,
+                'ip_address' => $ipAddress ?? '127.0.0.1',
+            ]);
+        }
+
+        Log::channel('billing')->info('BillingIntegrityService: reparación de la lista de morosos ejecutada.', [
+            'reparadas' => count($repaired),
+            'fallidas'  => count($failed),
+        ]);
+
+        return ['repaired' => $repaired, 'failed' => $failed];
+    }
+
     /**
      * Invariante 5 (best-effort): la lista 'morosos' del router debe reflejar a
      * los clientes SUSPENDIDOS con IP. Si MikroTik está deshabilitado o no
@@ -200,7 +298,7 @@ class BillingIntegrityService
 
         try {
             $mikrotik = app(MikroTikService::class);
-            $result   = $mikrotik->getAddressListEntries('morosos');
+            $result   = $mikrotik->getAddressListEntries($this->morososList());
         } catch (\Throwable $e) {
             return ['skipped' => 'MikroTik no disponible: ' . $e->getMessage()];
         }

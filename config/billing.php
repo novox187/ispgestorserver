@@ -12,6 +12,25 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Address-list de morosos en MikroTik
+    |--------------------------------------------------------------------------
+    | Nombre único, centralizado: antes vivía repetido como cadena literal en
+    | el servicio de suspensión, el controlador manual y la conciliación de
+    | integridad. Renombrarla en el router exigía tocar los tres archivos.
+    */
+    'morosos_list' => env('BILLING_MOROSOS_LIST', 'morosos'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Cota de lote del corte automático
+    |--------------------------------------------------------------------------
+    | Tope de clientes procesados por corrida de ProcessClientSuspension. Evita
+    | que una cartera vencida grande agote el timeout del job a mitad de lote.
+    */
+    'suspension_max_batch' => (int) env('BILLING_SUSPENSION_MAX_BATCH', 200),
+
+    /*
+    |--------------------------------------------------------------------------
     | Timezone del scheduler
     |--------------------------------------------------------------------------
     */
